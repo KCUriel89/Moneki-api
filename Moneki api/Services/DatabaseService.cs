@@ -1,35 +1,27 @@
-﻿using Microsoft.Data.SqlClient;
-using Moneki_api.Controllers;
 using Moneki_api.DTOs;
 using Moneki_api.Helpers;
 using Moneki_api.Models;
 using Proyecto_servicio.Helpers;
+using Supabase;
 using System;
 using System.Collections.Generic;
-using System.Data;
-using System.Text;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using static Supabase.Postgrest.Constants;
+
 namespace Moneki_api.Services
 {
-    public abstract class ConnectionToSQL
+    public class DatabaseService
     {
-        private readonly string connectionString =
-           "Server=DESKTOP-38IFLSE\\KCSQL;Database=Moneki;Trusted_Connection=True;TrustServerCertificate=True;";
-        //escritorio DESKTOP-38IFLSE\KCSQL
-        //laptop DESKTOP-N3GOVNS\\KCU_PRUEBA
+        private readonly Client _supabase;
 
-        protected SqlConnection GetConnection()
+        public DatabaseService(Client supabase)
         {
-            return new SqlConnection(connectionString);
+            _supabase = supabase;
         }
 
-
-    }
-
-    public class DatabaseService : ConnectionToSQL
-    {
         private string HashPassword(string password)
         {
             using var sha = SHA256.Create();
@@ -37,404 +29,312 @@ namespace Moneki_api.Services
             var hash = sha.ComputeHash(bytes);
             return Convert.ToBase64String(hash);
         }
+
+        // ===================== TESTAMENTOS =====================
+
         public async Task<TestamentoDetalles> ObtenerDetalleTestamentoAsync(int idTramite)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
+            // Obtener el trámite con sus relaciones
+            var tramiteResult = await _supabase
+                .From<TramiteSupabase>()
+                .Select("*, TramiteTestamento!inner(*), Usuarios!inner(Nombre, ApellidoPaterno, ApellidoMaterno)")
+                .Filter("ID_Tramite", Operator.Equals, idTramite)
+                .Get();
 
-            var cmd = new SqlCommand(@"
-    SELECT 
-        T.Estado,
-        TT.EstadoCivil,
-        TT.TieneHijos,
-        TT.NumeroHijos,
-        TT.BienesDeclarados,
-        TT.Pdf,
-        U.Nombre + ' ' + U.ApellidoPaterno + ' ' + U.ApellidoMaterno AS NombreCompleto
-    FROM Tramites T
-    JOIN TramiteTestamento TT ON T.ID_Tramite = TT.ID_Tramite
-    JOIN Usuarios U ON T.ID_Usuario = U.ID_Usuario
-    WHERE T.ID_Tramite = @id", conn);
+            var tramite = tramiteResult.Models.FirstOrDefault();
+            if (tramite == null) return null;
 
-            cmd.Parameters.AddWithValue("@id", idTramite);
+            // Obtener el testamento relacionado (esto requiere que tu modelo tenga las propiedades de navegación)
+            // Como alternativa, hacemos una consulta separada
+            var testamentoResult = await _supabase
+                .From<TramiteTestamentoSupabase>()
+                .Filter("ID_Tramite", Operator.Equals, idTramite)
+                .Get();
 
-            using var rd = await cmd.ExecuteReaderAsync();
-            if (!rd.Read()) return null;
+            var testamento = testamentoResult.Models.FirstOrDefault();
+            if (testamento == null) return null;
+
+            var usuarioResult = await _supabase
+                .From<UsuarioSupabase>()
+                .Select("Nombre, ApellidoPaterno, ApellidoMaterno")
+                .Filter("ID_Usuario", Operator.Equals, tramite.ID_Usuario)
+                .Get();
+
+            var usuario = usuarioResult.Models.FirstOrDefault();
 
             return new TestamentoDetalles
             {
-                Estado = rd["Estado"].ToString(),
-                EstadoCivil = rd["EstadoCivil"].ToString(),
-                TieneHijos = (bool)rd["TieneHijos"],
-                NumeroHijos = (int)rd["NumeroHijos"],
-                BienesDeclarados = rd["BienesDeclarados"].ToString(),
-                PdfGenerado = rd["Pdf"] as byte[],
-                NombreUsuario = rd["NombreCompleto"].ToString()
+                Estado = tramite.Estado,
+                EstadoCivil = testamento.EstadoCivil,
+                TieneHijos = testamento.TieneHijos,
+                NumeroHijos = testamento.NumeroHijos,
+                BienesDeclarados = testamento.BienesDeclarados,
+                PdfGenerado = testamento.Pdf,
+                NombreUsuario = usuario != null ? $"{usuario.Nombre} {usuario.ApellidoPaterno} {usuario.ApellidoMaterno}" : ""
             };
         }
+
         public async Task ActualizarEstadoTramiteINEAsync(int idTramite, string estado)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            var cmd = new SqlCommand(@"
-UPDATE Tramites
-SET Estado = @estado,
-    FechaActualizacion = GETDATE()
-WHERE ID_Tramite = @id", conn);
-
-            cmd.Parameters.Add("@estado", SqlDbType.VarChar).Value = estado;
-            cmd.Parameters.Add("@id", SqlDbType.Int).Value = idTramite;
-
-            int filas = await cmd.ExecuteNonQueryAsync();
-
-            if (filas == 0)
-                throw new Exception("No se encontró el trámite.");
+            await _supabase
+                .From<TramiteSupabase>()
+                .Where(x => x.ID_Tramite == idTramite)
+                .Set(x => x.Estado, estado)
+                .Set(x => x.FechaActualizacion, DateTime.UtcNow)
+                .Update();
         }
+
         public async Task<string?> ObtenerCorreoUsuarioPorTramiteINEAsync(int idTramite)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
+            var tramiteResult = await _supabase
+                .From<TramiteSupabase>()
+                .Select("ID_Usuario")
+                .Filter("ID_Tramite", Operator.Equals, idTramite)
+                .Get();
 
-            var cmd = new SqlCommand(@"
-SELECT U.Email
-FROM Tramites T
-INNER JOIN Usuarios U ON T.ID_Usuario = U.ID_Usuario
-INNER JOIN TramiteINE TI ON TI.ID_Tramite = T.ID_Tramite
-WHERE T.ID_Tramite = @id", conn);
+            var tramite = tramiteResult.Models.FirstOrDefault();
+            if (tramite == null) return null;
 
-            cmd.Parameters.Add("@id", SqlDbType.Int).Value = idTramite;
+            var usuarioResult = await _supabase
+                .From<UsuarioSupabase>()
+                .Select("Email")
+                .Filter("ID_Usuario", Operator.Equals, tramite.ID_Usuario)
+                .Get();
 
-            var result = await cmd.ExecuteScalarAsync();
-
-            return result?.ToString();
+            return usuarioResult.Models.FirstOrDefault()?.Email;
         }
+
         public async Task ActualizarEstadoTramiteAsync(int idTramite, string estado)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            var cmd = new SqlCommand(@"
-    UPDATE Tramites
-    SET Estado = @estado,
-        FechaActualizacion = GETDATE()
-    WHERE ID_Tramite = @id", conn);
-
-            cmd.Parameters.AddWithValue("@estado", estado);
-            cmd.Parameters.AddWithValue("@id", idTramite);
-
-            await cmd.ExecuteNonQueryAsync();
+            await _supabase
+                .From<TramiteSupabase>()
+                .Where(x => x.ID_Tramite == idTramite)
+                .Set(x => x.Estado, estado)
+                .Set(x => x.FechaActualizacion, DateTime.UtcNow)
+                .Update();
         }
 
         public async Task RechazarTramiteAsync(int idTramite, string motivo)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            var cmd = new SqlCommand(@"
-    UPDATE Tramites
-    SET Estado = 'Rechazado',
-        Observaciones = @motivo,
-        FechaActualizacion = GETDATE()
-    WHERE ID_Tramite = @id", conn);
-
-            cmd.Parameters.AddWithValue("@motivo", motivo);
-            cmd.Parameters.AddWithValue("@id", idTramite);
-
-            await cmd.ExecuteNonQueryAsync();
+            await _supabase
+                .From<TramiteSupabase>()
+                .Where(x => x.ID_Tramite == idTramite)
+                .Set(x => x.Estado, "Rechazado")
+                .Set(x => x.Observaciones, motivo)
+                .Set(x => x.FechaActualizacion, DateTime.UtcNow)
+                .Update();
         }
 
         public async Task<List<TestamentoListaItem>> ObtenerTestamentosParaRevisionAsync()
         {
+            var result = await _supabase
+                .From<TramiteSupabase>()
+                .Select("ID_Tramite, Estado, TramiteTestamento!inner(EstadoCivil)")
+                .Filter("TipoTramite", Operator.Equals, "TESTAMENTO")
+                .Filter("Estado", Operator.In, new[] { "Registrado", "En revisión" })
+                .Get();
+
             var lista = new List<TestamentoListaItem>();
-
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            var cmd = conn.CreateCommand();
-            cmd.CommandText = @"
-        SELECT
-            t.ID_Tramite,
-            t.Estado,
-            tt.EstadoCivil
-        FROM Tramites t
-        INNER JOIN TramiteTestamento tt 
-            ON t.ID_Tramite = tt.ID_Tramite
-        WHERE t.TipoTramite = 'TESTAMENTO'
-          AND t.Estado IN ('Registrado', 'En revisión')";
-
-            using var reader = await cmd.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
+            foreach (var tramite in result.Models)
             {
+                // Obtener el testamento relacionado
+                var testamentoResult = await _supabase
+                    .From<TramiteTestamentoSupabase>()
+                    .Select("EstadoCivil")
+                    .Filter("ID_Tramite", Operator.Equals, tramite.ID_Tramite)
+                    .Get();
+                    
+                var testamento = testamentoResult.Models.FirstOrDefault();
+                
                 lista.Add(new TestamentoListaItem
                 {
-                    IdTramite = reader.GetInt32(0),
-                    Estado = reader.GetString(1),
-                    EstadoCivil = reader.GetString(2)
+                    IdTramite = tramite.ID_Tramite,
+                    Estado = tramite.Estado,
+                    EstadoCivil = testamento?.EstadoCivil ?? ""
                 });
             }
-
             return lista;
         }
 
         public async Task<List<TestamentoRevisionItem>> ObtenerTestamentosPendientesAsync()
         {
+            var result = await _supabase
+                .From<TramiteSupabase>()
+                .Select("ID_Tramite, Estado, FechaCreacion")
+                .Filter("TipoTramite", Operator.Equals, "TESTAMENTO")
+                .Filter("Estado", Operator.Equals, "Registrado")
+                .Order("FechaCreacion", Ordering.Descending)
+                .Get();
+
             var lista = new List<TestamentoRevisionItem>();
-
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            var cmd = new SqlCommand(@"
-        SELECT 
-            t.ID_Tramite,
-            u.Nombre + ' ' + u.ApellidoPaterno + ' ' + u.ApellidoMaterno AS NombreUsuario,
-            tt.EstadoCivil,
-            tt.TieneHijos,
-            tt.NumeroHijos,
-            t.Estado,
-            t.FechaCreacion
-        FROM Tramites t
-        INNER JOIN Usuarios u ON u.ID_Usuario = t.ID_Usuario
-        INNER JOIN TramiteTestamento tt ON tt.ID_Tramite = t.ID_Tramite
-        WHERE t.TipoTramite = 'TESTAMENTO'
-        AND t.Estado = 'Registrado'
-        ORDER BY t.FechaCreacion DESC", conn);
-
-            using var rd = await cmd.ExecuteReaderAsync();
-            while (await rd.ReadAsync())
+            foreach (var tramite in result.Models)
             {
+                // Obtener usuario
+                var usuarioResult = await _supabase
+                    .From<UsuarioSupabase>()
+                    .Select("Nombre, ApellidoPaterno, ApellidoMaterno")
+                    .Filter("ID_Usuario", Operator.Equals, tramite.ID_Usuario)
+                    .Get();
+                var usuario = usuarioResult.Models.FirstOrDefault();
+
+                // Obtener testamento
+                var testamentoResult = await _supabase
+                    .From<TramiteTestamentoSupabase>()
+                    .Select("EstadoCivil, TieneHijos, NumeroHijos")
+                    .Filter("ID_Tramite", Operator.Equals, tramite.ID_Tramite)
+                    .Get();
+                var testamento = testamentoResult.Models.FirstOrDefault();
+
                 lista.Add(new TestamentoRevisionItem
                 {
-                    IdTramite = rd.GetInt32(0),
-                    NombreUsuario = rd.GetString(1),
-                    EstadoCivil = rd.GetString(2),
-                    TieneHijos = rd.GetBoolean(3),
-                    NumeroHijos = rd.GetInt32(4),
-                    Estado = rd.GetString(5),
-                    Fecha = rd.GetDateTime(6)
+                    IdTramite = tramite.ID_Tramite,
+                    NombreUsuario = usuario != null ? $"{usuario.Nombre} {usuario.ApellidoPaterno} {usuario.ApellidoMaterno}" : "",
+                    EstadoCivil = testamento?.EstadoCivil ?? "",
+                    TieneHijos = testamento?.TieneHijos ?? false,
+                    NumeroHijos = testamento?.NumeroHijos ?? 0,
+                    Estado = tramite.Estado,
+                    Fecha = tramite.FechaCreacion
                 });
             }
-
             return lista;
         }
+
         public async Task<byte[]?> ObtenerPdfAsync(int idTramite)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
+            var result = await _supabase
+                .From<TramiteTestamentoSupabase>()
+                .Select("Pdf")
+                .Filter("ID_Tramite", Operator.Equals, idTramite)
+                .Get();
 
-            var cmd = new SqlCommand(@"
-        SELECT Pdf
-        FROM TramiteTestamento
-        WHERE ID_Tramite = @id", conn);
-
-            cmd.Parameters.AddWithValue("@id", idTramite);
-
-            var result = await cmd.ExecuteScalarAsync();
-
-            if (result == null || result == DBNull.Value)
-                return null;
-
-            return (byte[])result;
+            return result.Models.FirstOrDefault()?.Pdf;
         }
+
         public async Task<List<TestamentoListaItem>> ObtenerTestamentosUsuarioAsync(int idUsuario)
         {
+            var result = await _supabase
+                .From<TramiteSupabase>()
+                .Select("ID_Tramite, Estado")
+                .Filter("ID_Usuario", Operator.Equals, idUsuario)
+                .Filter("TipoTramite", Operator.Equals, "TESTAMENTO")
+                .Get();
+
             var lista = new List<TestamentoListaItem>();
-
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            var cmd = conn.CreateCommand();
-            cmd.CommandText = @"
-        SELECT
-            t.ID_Tramite,
-            t.Estado,
-            tt.EstadoCivil
-        FROM Tramites t
-        INNER JOIN TramiteTestamento tt ON t.ID_Tramite = tt.ID_Tramite
-        WHERE t.ID_Usuario = @id";
-
-            cmd.Parameters.AddWithValue("@id", idUsuario);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
+            foreach (var tramite in result.Models)
             {
+                var testamentoResult = await _supabase
+                    .From<TramiteTestamentoSupabase>()
+                    .Select("EstadoCivil")
+                    .Filter("ID_Tramite", Operator.Equals, tramite.ID_Tramite)
+                    .Get();
+                var testamento = testamentoResult.Models.FirstOrDefault();
+
                 lista.Add(new TestamentoListaItem
                 {
-                    IdTramite = reader.GetInt32(0),
-                    Estado = reader.GetString(1),
-                    EstadoCivil = reader.GetString(2)
+                    IdTramite = tramite.ID_Tramite,
+                    Estado = tramite.Estado,
+                    EstadoCivil = testamento?.EstadoCivil ?? ""
                 });
             }
-
             return lista;
         }
-
 
         public async Task CrearTramiteTestamentoAsync(CrearTestamentoDto dto)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            using var tx = conn.BeginTransaction();
-
-            try
+            // 1. Insertar trámite
+            var newTramite = new TramiteSupabase
             {
-                // 1️⃣ Crear trámite general
-                var cmdTramite = new SqlCommand(@"
-INSERT INTO Tramites (ID_Usuario, TipoTramite, Estado, FechaCreacion)
-OUTPUT INSERTED.ID_Tramite
-VALUES (@usuario, 'TESTAMENTO', 'Registrado', GETDATE())",
-                    conn, tx);
+                ID_Usuario = dto.IdUsuario,
+                TipoTramite = "TESTAMENTO",
+                Estado = "Registrado",
+                FechaCreacion = DateTime.UtcNow
+            };
+            
+            var insertedTramite = await _supabase.From<TramiteSupabase>().Insert(newTramite);
+            int idTramite = insertedTramite.Models.First().ID_Tramite;
 
-                cmdTramite.Parameters.AddWithValue("@usuario", dto.IdUsuario);
+            // 2. Generar PDF
+            byte[] pdf = TestamentoPdfGenerator.GenerarTestamento(
+                dto.NombreCompleto,
+                dto.EstadoCivil,
+                dto.TieneHijos,
+                dto.NumeroHijos,
+                dto.BienesDeclarados,
+                dto.Fecha
+            );
 
-                int idTramite = (int)await cmdTramite.ExecuteScalarAsync();
-
-                // 2️⃣ Generar PDF
-                byte[] pdf = TestamentoPdfGenerator.GenerarTestamento(
-                    dto.NombreCompleto,
-                    dto.EstadoCivil,
-                    dto.TieneHijos,
-                    dto.NumeroHijos,
-                    dto.BienesDeclarados,
-                    dto.Fecha
-                );
-
-                // 3️⃣ Insertar datos del testamento
-                var cmdTestamento = new SqlCommand(@"
-INSERT INTO TramiteTestamento
-(
-    ID_Tramite,
-    EstadoCivil,
-    TieneHijos,
-    NumeroHijos,
-    BienesDeclarados,
-    Pdf
-)
-VALUES
-(
-    @tramite,
-    @estado,
-    @hijos,
-    @numHijos,
-    @bienes,
-    @pdf
-)",
-                    conn, tx);
-
-                cmdTestamento.Parameters.AddWithValue("@tramite", idTramite);
-                cmdTestamento.Parameters.AddWithValue("@estado", dto.EstadoCivil);
-                cmdTestamento.Parameters.AddWithValue("@hijos", dto.TieneHijos);
-                cmdTestamento.Parameters.AddWithValue("@numHijos",
-                    dto.TieneHijos ? dto.NumeroHijos : 0);
-                cmdTestamento.Parameters.AddWithValue("@bienes", dto.BienesDeclarados);
-                cmdTestamento.Parameters.Add("@pdf", SqlDbType.VarBinary).Value = pdf;
-
-                await cmdTestamento.ExecuteNonQueryAsync();
-
-                tx.Commit();
-            }
-            catch
+            // 3. Insertar testamento
+            var newTestamento = new TramiteTestamentoSupabase
             {
-                tx.Rollback();
-                throw;
-            }
+                ID_Tramite = idTramite,
+                EstadoCivil = dto.EstadoCivil,
+                TieneHijos = dto.TieneHijos,
+                NumeroHijos = dto.TieneHijos ? dto.NumeroHijos : 0,
+                BienesDeclarados = dto.BienesDeclarados,
+                Pdf = pdf,
+                DeclaracionAceptada = true
+            };
+            
+            await _supabase.From<TramiteTestamentoSupabase>().Insert(newTestamento);
         }
 
         public async Task<string?> ObtenerCorreoUsuarioPorTramiteAsync(int idTramite)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
+            var tramiteResult = await _supabase
+                .From<TramiteSupabase>()
+                .Select("ID_Usuario")
+                .Filter("ID_Tramite", Operator.Equals, idTramite)
+                .Get();
 
-            using var cmd = new SqlCommand(@"
-        SELECT u.Email
-        FROM Tramites t
-        INNER JOIN Usuarios u ON t.ID_Usuario = u.ID_Usuario
-        WHERE t.ID_Tramite = @idTramite
-    ", conn);
+            var tramite = tramiteResult.Models.FirstOrDefault();
+            if (tramite == null) return null;
 
-            cmd.Parameters.AddWithValue("@idTramite", idTramite);
+            var usuarioResult = await _supabase
+                .From<UsuarioSupabase>()
+                .Select("Email")
+                .Filter("ID_Usuario", Operator.Equals, tramite.ID_Usuario)
+                .Get();
 
-            var result = await cmd.ExecuteScalarAsync();
-
-            if (result == null || result == DBNull.Value)
-                return null;
-
-            return result.ToString();
+            return usuarioResult.Models.FirstOrDefault()?.Email;
         }
+
+        // ===================== INE =====================
 
         public async Task AceptarINEAsync(AceptarIneDto dto)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
+            // 1. Actualizar trámite
+            await _supabase
+                .From<TramiteSupabase>()
+                .Where(x => x.ID_Tramite == dto.IdTramite)
+                .Set(x => x.Estado, "Aceptado")
+                .Set(x => x.ID_Trabajador, dto.IdTrabajador)
+                .Set(x => x.FechaActualizacion, DateTime.UtcNow)
+                .Update();
 
-            using var transaction = conn.BeginTransaction();
+            // 2. Obtener módulo más cercano
+            string modulo = await ObtenerModuloMasCercanoAsync(new ModuloCercanoDto { DireccionUsuario = dto.DireccionUsuario });
 
-            try
-            {
-                // 🔹 1. Actualizar trámite
-                var cmd = new SqlCommand(@"
-UPDATE Tramites
-SET Estado = 'Aceptado',
-    ID_Trabajador = @trabajador,
-    FechaActualizacion = GETDATE()
-WHERE ID_Tramite = @id", conn, transaction);
-
-                cmd.Parameters.AddWithValue("@trabajador", dto.IdTrabajador);
-                cmd.Parameters.AddWithValue("@id", dto.IdTramite);
-
-                int filasAfectadas = await cmd.ExecuteNonQueryAsync();
-
-                if (filasAfectadas == 0)
-                    throw new Exception("No se encontró el trámite para actualizar.");
-
-                // 🔹 2. Obtener módulo más cercano
-                string modulo = await ObtenerModuloMasCercanoAsync(
-                    new ModuloCercanoDto
-                    {
-                        DireccionUsuario = dto.DireccionUsuario
-                    });
-
-                // 🔹 3. Confirmar cambios en BD
-                await transaction.CommitAsync();
-
-                // 🔹 4. Enviar correo (solo si todo salió bien)
-                var emailService = new EmailService();
-
-                await emailService.EnviarCorreoAsync(
-                    dto.CorreoUsuario,
-                    "Trámite INE Aceptado",
-                    $"Tu trámite fue ACEPTADO.\n\nAcude al módulo:\n{modulo}"
-                );
-            }
-            catch
-            {
-                await transaction.RollbackAsync();
-                throw;
-            }
+            // 3. Enviar correo
+            var emailService = new EmailService();
+            await emailService.EnviarCorreoAsync(
+                dto.CorreoUsuario,
+                "Trámite INE Aceptado",
+                $"Tu trámite fue ACEPTADO.\n\nAcude al módulo:\n{modulo}"
+            );
         }
 
         public async Task RechazarINEAsync(RechazarIneDto dto)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            var cmd = new SqlCommand(@"
-UPDATE Tramites
-SET Estado = 'Rechazado',
-    ID_Trabajador = @trabajador,
-    Observaciones = @motivo,
-    FechaActualizacion = GETDATE()
-WHERE ID_Tramite = @id", conn);
-
-            cmd.Parameters.AddWithValue("@trabajador", dto.IdTrabajador);
-            cmd.Parameters.AddWithValue("@motivo", dto.Motivo);
-            cmd.Parameters.AddWithValue("@id", dto.IdTramite);
-
-            await cmd.ExecuteNonQueryAsync();
+            await _supabase
+                .From<TramiteSupabase>()
+                .Where(x => x.ID_Tramite == dto.IdTramite)
+                .Set(x => x.Estado, "Rechazado")
+                .Set(x => x.ID_Trabajador, dto.IdTrabajador)
+                .Set(x => x.Observaciones, dto.Motivo)
+                .Set(x => x.FechaActualizacion, DateTime.UtcNow)
+                .Update();
 
             var emailService = new EmailService();
-
             await emailService.EnviarCorreoAsync(
                 dto.CorreoUsuario,
                 "Trámite INE rechazado",
@@ -448,27 +348,18 @@ MONEKI."
             );
         }
 
-
         public async Task<string> ObtenerModuloMasCercanoAsync(ModuloCercanoDto dto)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
+            var result = await _supabase
+                .From<ModuloINESupabase>()
+                .Select("Nombre, Direccion")
+                .Limit(1)
+                .Get();
 
-            string sql = @"
-SELECT TOP 1
-    Nombre,
-    Direccion
-FROM ModulosINE";
-
-            using var cmd = new SqlCommand(sql, conn);
-            using var rd = await cmd.ExecuteReaderAsync();
-
-            if (await rd.ReadAsync())
+            if (result.Models.Any())
             {
-                string nombre = rd.GetString(0);
-                string direccion = rd.GetString(1);
-
-                return $"{nombre}\n{direccion}";
+                var modulo = result.Models.First();
+                return $"{modulo.Nombre}\n{modulo.Direccion}";
             }
 
             return "No se encontró un módulo INE disponible";
@@ -476,80 +367,73 @@ FROM ModulosINE";
 
         public async Task<string> ObtenerCorreoUsuarioPorTramite(int idTramite)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
+            var tramiteResult = await _supabase
+                .From<TramiteSupabase>()
+                .Select("ID_Usuario")
+                .Filter("ID_Tramite", Operator.Equals, idTramite)
+                .Get();
 
-            string sql = @"
-SELECT u.Email
-FROM Tramites t
-JOIN Usuarios u ON u.ID_Usuario = t.ID_Usuario
-WHERE t.ID_Tramite = @id";
+            var tramite = tramiteResult.Models.FirstOrDefault();
+            if (tramite == null) return "";
 
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@id", idTramite);
+            var usuarioResult = await _supabase
+                .From<UsuarioSupabase>()
+                .Select("Email")
+                .Filter("ID_Usuario", Operator.Equals, tramite.ID_Usuario)
+                .Get();
 
-            return (string)await cmd.ExecuteScalarAsync();
+            return usuarioResult.Models.FirstOrDefault()?.Email ?? "";
         }
 
         public async Task<List<TramiteINEItem>> ObtenerTramitesINEPendientesAsync()
         {
+            var result = await _supabase
+                .From<TramiteSupabase>()
+                .Select("ID_Tramite, Estado, FechaCreacion")
+                .Filter("Estado", Operator.Equals, "Registrado")
+                .Filter("TipoTramite", Operator.Equals, "INE")
+                .Order("FechaCreacion", Ordering.Descending)
+                .Get();
+
             var lista = new List<TramiteINEItem>();
-
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            string sql = @"
-        SELECT 
-            t.ID_Tramite,
-            t.Estado,
-            t.FechaCreacion,
-            i.CURP
-        FROM Tramites t
-        INNER JOIN TramiteINE i ON i.ID_Tramite = t.ID_Tramite
-        WHERE t.Estado = 'Registrado'
-        ORDER BY t.FechaCreacion DESC";
-
-            using var cmd = new SqlCommand(sql, conn);
-            using var rd = await cmd.ExecuteReaderAsync();
-
-            while (await rd.ReadAsync())
+            foreach (var tramite in result.Models)
             {
+                var ineResult = await _supabase
+                    .From<TramiteINESupabase>()
+                    .Select("CURP")
+                    .Filter("ID_Tramite", Operator.Equals, tramite.ID_Tramite)
+                    .Get();
+                var ine = ineResult.Models.FirstOrDefault();
+
                 lista.Add(new TramiteINEItem
                 {
-                    IdTramite = rd.GetInt32(0),
-                    Estado = rd.GetString(1),
-                    FechaCreacion = rd.GetDateTime(2),
-                    CURP = rd.GetString(3)
+                    IdTramite = tramite.ID_Tramite,
+                    Estado = tramite.Estado,
+                    FechaCreacion = tramite.FechaCreacion,
+                    CURP = ine?.CURP ?? ""
                 });
             }
-
             return lista;
         }
 
-        public async Task ActualizarEstadoTramite(
-      int idTramite,
-      string estado,
-      string observaciones = null)
+        public async Task ActualizarEstadoTramite(int idTramite, string estado, string observaciones = null)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            string sql = @"
-UPDATE Tramites
-SET Estado = @e,
-    Observaciones = @o,
-    FechaActualizacion = GETDATE()
-WHERE ID_Tramite = @id";
-
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@id", idTramite);
-            cmd.Parameters.AddWithValue("@e", estado);
-            cmd.Parameters.AddWithValue("@o", (object?)observaciones ?? DBNull.Value);
-
-            await cmd.ExecuteNonQueryAsync();
+            var update = _supabase
+                .From<TramiteSupabase>()
+                .Where(x => x.ID_Tramite == idTramite)
+                .Set(x => x.Estado, estado)
+                .Set(x => x.FechaActualizacion, DateTime.UtcNow);
+                
+            if (observaciones != null)
+            {
+                update.Set(x => x.Observaciones, observaciones);
+            }
+            
+            await update.Update();
         }
 
-        /* ===================== USUARIOS ===================== */
+        // ===================== USUARIOS =====================
+
         public async Task RegisterUserAsync(
             string nombre,
             string apellidoPaterno,
@@ -564,99 +448,52 @@ WHERE ID_Tramite = @id";
             double longitud
         )
         {
-            string query = @"
-        INSERT INTO Usuarios
-        (
-            Nombre,
-            ApellidoPaterno,
-            ApellidoMaterno,
-            Email,
-            PasswordHash,
-            Telefono,
-            Direccion,
-            FechaNacimiento,
-            FechaRegistro,
-            Latitud,
-            Longitud
-        )
-        VALUES
-        (
-            @Nombre,
-            @ApellidoPaterno,
-            @ApellidoMaterno,
-            @Email,
-            @PasswordHash,
-            @Telefono,
-            @Direccion,
-            @FechaNacimiento,
-            @FechaRegistro,
-            @Latitud,
-            @Longitud
-        )";
-
-            using (SqlConnection con = GetConnection())
-            using (SqlCommand cmd = new SqlCommand(query, con))
+            var newUser = new UsuarioSupabase
             {
-                cmd.Parameters.AddWithValue("@Nombre", nombre);
-                cmd.Parameters.AddWithValue("@ApellidoPaterno", apellidoPaterno);
-                cmd.Parameters.AddWithValue("@ApellidoMaterno", apellidoMaterno);
-                cmd.Parameters.AddWithValue("@Email", email);
+                Nombre = nombre,
+                ApellidoPaterno = apellidoPaterno,
+                ApellidoMaterno = apellidoMaterno,
+                Email = email,
+                PasswordHash = HashPassword(password), // ¡Usando hash!
+                Telefono = telefono,
+                Direccion = direccion,
+                FechaNacimiento = fechaNacimiento,
+                FechaRegistro = fechaRegistro,
+                Latitud = latitud,
+                Longitud = longitud
+            };
 
-                // 🔐 IMPORTANTE: aquí luego puedes meter hashing
-                cmd.Parameters.AddWithValue("@PasswordHash", password);
-
-                cmd.Parameters.AddWithValue("@Telefono", telefono ?? (object)DBNull.Value);
-                cmd.Parameters.AddWithValue("@Direccion", direccion ?? (object)DBNull.Value);
-                cmd.Parameters.AddWithValue("@FechaNacimiento", fechaNacimiento);
-                cmd.Parameters.AddWithValue("@FechaRegistro", fechaRegistro);
-                cmd.Parameters.AddWithValue("@Latitud", latitud);
-                cmd.Parameters.AddWithValue("@Longitud", longitud);
-
-                await con.OpenAsync();
-                await cmd.ExecuteNonQueryAsync();
-            }
+            await _supabase.From<UsuarioSupabase>().Insert(newUser);
         }
-
 
         public async Task<bool> UserExistsAsync(string email)
         {
-            const string query = "SELECT COUNT(*) FROM Usuarios WHERE Email = @email";
+            var result = await _supabase
+                .From<UsuarioSupabase>()
+                .Select("ID_Usuario")
+                .Filter("Email", Operator.Equals, email)
+                .Get();
 
-            using var con = GetConnection();
-            using var cmd = new SqlCommand(query, con);
-            cmd.Parameters.AddWithValue("@email", email);
-
-            await con.OpenAsync();
-            return (int)await cmd.ExecuteScalarAsync() > 0;
+            return result.Models.Any();
         }
 
         public async Task<(int Id, string Email)?> LoginUsuarioEmailAsync(LoginDto dto)
         {
-            using var con = GetConnection();
-            await con.OpenAsync();
+            var hashedPassword = HashPassword(dto.Password);
+            
+            var result = await _supabase
+                .From<UsuarioSupabase>()
+                .Select("ID_Usuario, Email")
+                .Filter("Email", Operator.Equals, dto.Email)
+                .Filter("PasswordHash", Operator.Equals, hashedPassword)
+                .Get();
 
-            string query = @"
-        SELECT ID_Usuario, Email
-        FROM Usuarios
-        WHERE Email = @Email AND PasswordHash = @Password";
-
-            using var cmd = new SqlCommand(query, con);
-            cmd.Parameters.AddWithValue("@Email", dto.Email);
-            cmd.Parameters.AddWithValue("@Password", dto.Password);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-
-            if (await reader.ReadAsync())
-            {
-                int id = reader.GetInt32(reader.GetOrdinal("ID_Usuario"));
-                string email = reader.GetString(reader.GetOrdinal("Email"));
-
-                return (id, email);
-            }
+            var user = result.Models.FirstOrDefault();
+            if (user != null)
+                return (user.ID_Usuario, user.Email);
 
             return null;
         }
-
 
         public async Task<bool> CorreoExisteUsuariosAsync(string correo)
         {
@@ -665,211 +502,135 @@ WHERE ID_Tramite = @id";
 
             correo = correo.Trim().ToLower();
 
-            string query = @"
-SELECT COUNT(*)
-FROM Usuarios
-WHERE LOWER(LTRIM(RTRIM(Email))) = @correo";
+            var result = await _supabase
+                .From<UsuarioSupabase>()
+                .Select("Email")
+                .Filter("Email", Operator.Equals, correo)
+                .Get();
 
-            using SqlConnection con = GetConnection();
-            using SqlCommand cmd = new SqlCommand(query, con);
-
-            cmd.Parameters.AddWithValue("@correo", correo);
-
-            await con.OpenAsync();
-            int count = Convert.ToInt32(await cmd.ExecuteScalarAsync());
-
-            return count > 0;
+            return result.Models.Any();
         }
 
-
-
-        /* ===================== TRABAJADORES ===================== */
+        // ===================== TRABAJADORES =====================
 
         public async Task<(int Id, string Email)?> LoginTrabajadorEmailAsync(LoginDto dto)
         {
-            using var con = GetConnection();
-            await con.OpenAsync();
+            var hashedPassword = HashPassword(dto.Password);
+            
+            var result = await _supabase
+                .From<TrabajadorSupabase>()
+                .Select("ID_Trabajador, Email")
+                .Filter("Email", Operator.Equals, dto.Email)
+                .Filter("PasswordHash", Operator.Equals, hashedPassword)
+                .Get();
 
-            string query = @"
-        SELECT ID_Trabajador, Email
-        FROM Trabajadores
-        WHERE Email = @Email AND PasswordHash = @Password";
-
-            using var cmd = new SqlCommand(query, con);
-            cmd.Parameters.AddWithValue("@Email", dto.Email);
-            cmd.Parameters.AddWithValue("@Password", dto.Password);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-
-            if (await reader.ReadAsync())
-            {
-                int id = reader.GetInt32(reader.GetOrdinal("ID_Trabajador"));
-                string email = reader.GetString(reader.GetOrdinal("Email"));
-
-                return (id, email);
-            }
+            var trabajador = result.Models.FirstOrDefault();
+            if (trabajador != null)
+                return (trabajador.ID_Trabajador, trabajador.Email);
 
             return null;
         }
 
-
-        /* ===================== ADMINISTRADORES ===================== */
+        // ===================== ADMINISTRADORES =====================
 
         public async Task<(int Id, string Email)?> LoginAdminEmailAsync(LoginDto dto)
         {
-            using var con = GetConnection();
-            await con.OpenAsync();
+            var hashedPassword = HashPassword(dto.Password);
+            
+            var result = await _supabase
+                .From<AdministradorSupabase>()
+                .Select("ID_Administrador, Email")
+                .Filter("Email", Operator.Equals, dto.Email)
+                .Filter("PasswordHash", Operator.Equals, hashedPassword)
+                .Get();
 
-            string query = @"
-        SELECT ID_Administrador, Email
-        FROM Administradores
-        WHERE Email = @Email AND PasswordHash = @Password";
-
-            using var cmd = new SqlCommand(query, con);
-            cmd.Parameters.AddWithValue("@Email", dto.Email);
-            cmd.Parameters.AddWithValue("@Password", dto.Password);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-
-            if (await reader.ReadAsync())
-            {
-                int id = reader.GetInt32(reader.GetOrdinal("ID_Administrador"));
-                string email = reader.GetString(reader.GetOrdinal("Email"));
-
-                return (id, email);
-            }
+            var admin = result.Models.FirstOrDefault();
+            if (admin != null)
+                return (admin.ID_Administrador, admin.Email);
 
             return null;
         }
 
+        // ===================== RECUPERACIÓN PASSWORD =====================
 
-
-        /* ===================== RECUPERACIÓN PASSWORD ===================== */
         public async Task<int> ActualizarPasswordPorCorreoAsync(string correo, string nuevaPassword)
         {
-            string query = @"
-        UPDATE Usuarios
-        SET PasswordHash = @pw
-        WHERE Email = @correo
-    ";
+            var hashedPassword = HashPassword(nuevaPassword);
+            
+            var result = await _supabase
+                .From<UsuarioSupabase>()
+                .Where(x => x.Email == correo)
+                .Set(x => x.PasswordHash, hashedPassword)
+                .Update();
 
-            using SqlConnection con = GetConnection();
-            using SqlCommand cmd = new SqlCommand(query, con);
-
-            cmd.Parameters.AddWithValue("@pw", nuevaPassword);
-            cmd.Parameters.AddWithValue("@correo", correo);
-
-            await con.OpenAsync();
-            return await cmd.ExecuteNonQueryAsync();
+            return result.Models.Count;
         }
 
         public async Task GuardarCodigoRecuperacionAsync(string correo, string codigo)
         {
-            const string query = @"
-                INSERT INTO RecuperacionPassword (Correo, Codigo)
-                VALUES (@Correo, @Codigo)";
+            var newRecord = new RecuperacionPasswordSupabase
+            {
+                Correo = correo,
+                Codigo = codigo,
+                Fecha = DateTime.UtcNow,
+                Usado = false
+            };
 
-            await ExecuteAsync(query,
-                new SqlParameter("@Correo", correo),
-                new SqlParameter("@Codigo", codigo));
+            await _supabase.From<RecuperacionPasswordSupabase>().Insert(newRecord);
         }
 
         public async Task<bool> ValidarCodigoAsync(string correo, string codigo)
         {
-            const string query = @"
-                SELECT COUNT(*) FROM RecuperacionPassword
-                WHERE Correo = @Correo AND Codigo = @Codigo AND Usado = 0";
+            var result = await _supabase
+                .From<RecuperacionPasswordSupabase>()
+                .Select("ID")
+                .Filter("Correo", Operator.Equals, correo)
+                .Filter("Codigo", Operator.Equals, codigo)
+                .Filter("Usado", Operator.Equals, false)
+                .Get();
 
-            using var con = GetConnection();
-            using var cmd = new SqlCommand(query, con);
-
-            cmd.Parameters.AddWithValue("@Correo", correo);
-            cmd.Parameters.AddWithValue("@Codigo", codigo);
-
-            await con.OpenAsync();
-            return (int)await cmd.ExecuteScalarAsync() > 0;
+            return result.Models.Any();
         }
 
         public async Task MarcarCodigoUsadoAsync(string correo, string codigo)
         {
-            const string query = @"
-                UPDATE RecuperacionPassword
-                SET Usado = 1
-                WHERE Correo = @Correo AND Codigo = @Codigo";
-
-            await ExecuteAsync(query,
-                new SqlParameter("@Correo", correo),
-                new SqlParameter("@Codigo", codigo));
+            await _supabase
+                .From<RecuperacionPasswordSupabase>()
+                .Where(x => x.Correo == correo && x.Codigo == codigo)
+                .Set(x => x.Usado, true)
+                .Update();
         }
 
         public async Task ActualizarPasswordUsuarioAsync(string correo, string nuevoPasswordHash)
         {
-            const string query = @"
-                UPDATE Usuarios
-                SET PasswordHash = @PasswordHash
-                WHERE Email = @Email";
-
-            await ExecuteAsync(query,
-                new SqlParameter("@PasswordHash", nuevoPasswordHash),
-                new SqlParameter("@Email", correo));
+            var hashedPassword = HashPassword(nuevoPasswordHash);
+            
+            await _supabase
+                .From<UsuarioSupabase>()
+                .Where(x => x.Email == correo)
+                .Set(x => x.PasswordHash, hashedPassword)
+                .Update();
         }
 
-        /* ===================== HELPERS ===================== */
+        // ===================== MÓDULOS INE =====================
 
-        private async Task<Dictionary<string, object>?> EjecutarLoginAsync(
-            string query, params SqlParameter[] parameters)
-        {
-            using var con = GetConnection();
-            using var cmd = new SqlCommand(query, con);
-            cmd.Parameters.AddRange(parameters);
-
-            await con.OpenAsync();
-            using var reader = await cmd.ExecuteReaderAsync();
-
-            if (!await reader.ReadAsync())
-                return null;
-
-            var result = new Dictionary<string, object>();
-            for (int i = 0; i < reader.FieldCount; i++)
-                result[reader.GetName(i)] = reader.GetValue(i);
-
-            return result;
-        }
-
-        public async Task<int> ExecuteAsync(string query, params SqlParameter[] parameters)
-        {
-            using (SqlConnection con = GetConnection())
-            using (SqlCommand cmd = new SqlCommand(query, con))
-            {
-                cmd.Parameters.AddRange(parameters);
-                await con.OpenAsync();
-                return await cmd.ExecuteNonQueryAsync();
-            }
-        }
         public async Task<List<ModuloINE>> ObtenerModulosINEAsync()
         {
-            string query = @"
-        SELECT IdModulo, Nombre, Direccion, Latitud, Longitud
-        FROM ModulosAtencion
-        WHERE TipoModulo = 'INE'";
+            var result = await _supabase
+                .From<ModuloINESupabase>()
+                .Select("*")
+                .Get();
 
             var lista = new List<ModuloINE>();
-
-            using SqlConnection con = GetConnection();
-            using SqlCommand cmd = new SqlCommand(query, con);
-
-            await con.OpenAsync();
-            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
+            foreach (var modulo in result.Models)
             {
                 lista.Add(new ModuloINE
                 {
-                    IdModulo = reader.GetInt32(0),
-                    Nombre = reader.GetString(1),
-                    Direccion = reader.GetString(2),
-                    Latitud = reader.GetDouble(3),
-                    Longitud = reader.GetDouble(4),
+                    IdModulo = modulo.ID_Modulo,
+                    Nombre = modulo.Nombre,
+                    Direccion = modulo.Direccion,
+                    Latitud = modulo.Latitud,
+                    Longitud = modulo.Longitud,
                     DistanciaKm = 0
                 });
             }
@@ -877,734 +638,144 @@ WHERE LOWER(LTRIM(RTRIM(Email))) = @correo";
             return lista;
         }
 
-        // ===================== Tramites =====================
+        // ===================== TRÁMITES INE =====================
 
         public async Task<INECompleto?> ObtenerINECompleto(int idTramite)
         {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
+            var tramiteResult = await _supabase
+                .From<TramiteSupabase>()
+                .Select("*")
+                .Filter("ID_Tramite", Operator.Equals, idTramite)
+                .Get();
 
-            string sql = @"
-SELECT 
-    t.ID_Tramite,
-    i.CURP,
-    t.Estado,
-    t.FechaCreacion,
-    i.ActaNacimiento,
-    i.ComprobanteDomicilio,
-    i.Identificacion,
-    u.Email,
-    u.Direccion
-FROM Tramites t
-INNER JOIN TramiteINE i ON i.ID_Tramite = t.ID_Tramite
-INNER JOIN Usuarios u ON u.ID_Usuario = t.ID_Usuario
-WHERE t.ID_Tramite = @id";
+            var tramite = tramiteResult.Models.FirstOrDefault();
+            if (tramite == null) return null;
 
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@id", idTramite);
+            var ineResult = await _supabase
+                .From<TramiteINESupabase>()
+                .Select("*")
+                .Filter("ID_Tramite", Operator.Equals, idTramite)
+                .Get();
+            var ine = ineResult.Models.FirstOrDefault();
 
-            using var rd = await cmd.ExecuteReaderAsync();
-
-            if (!await rd.ReadAsync())
-                return null;
+            var usuarioResult = await _supabase
+                .From<UsuarioSupabase>()
+                .Select("Email, Direccion")
+                .Filter("ID_Usuario", Operator.Equals, tramite.ID_Usuario)
+                .Get();
+            var usuario = usuarioResult.Models.FirstOrDefault();
 
             return new INECompleto
             {
-                IdTramite = rd.GetInt32(0),
-                CURP = rd.IsDBNull(1) ? "" : rd.GetString(1),
-                Estado = rd.IsDBNull(2) ? "" : rd.GetString(2),
-                Fecha = rd.GetDateTime(3),
-
-                ActaNacimiento = rd.IsDBNull(4)
-    ? null
-    : await rd.GetFieldValueAsync<byte[]>(4),
-
-                ComprobanteDomicilio = rd.IsDBNull(5)
-    ? null
-    : await rd.GetFieldValueAsync<byte[]>(5),
-
-                Identificacion = rd.IsDBNull(6)
-    ? null
-    : await rd.GetFieldValueAsync<byte[]>(6),
-
-                CorreoUsuario = rd.IsDBNull(7) ? "" : rd.GetString(7),
-                DireccionUsuario = rd.IsDBNull(8) ? "" : rd.GetString(8)
+                IdTramite = tramite.ID_Tramite,
+                CURP = ine?.CURP ?? "",
+                Estado = tramite.Estado,
+                Fecha = tramite.FechaCreacion,
+                ActaNacimiento = ine?.ActaNacimiento,
+                ComprobanteDomicilio = ine?.ComprobanteDomicilio,
+                Identificacion = ine?.Identificacion,
+                CorreoUsuario = usuario?.Email ?? "",
+                DireccionUsuario = usuario?.Direccion ?? ""
             };
         }
-
-
-
-
-
 
         public async Task<List<TramiteINEItem>> ObtenerMisTramitesINEAsync(int IdUsuario)
         {
-            List<TramiteINEItem> lista = new();
+            var tramitesResult = await _supabase
+                .From<TramiteSupabase>()
+                .Select("ID_Tramite, Estado, FechaCreacion")
+                .Filter("ID_Usuario", Operator.Equals, IdUsuario)
+                .Filter("TipoTramite", Operator.Equals, "INE")
+                .Get();
 
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            var cmd = new SqlCommand(@"
-        SELECT 
-            t.ID_Tramite,
-            i.CURP,
-            t.Estado,
-            t.FechaCreacion
-        FROM Tramites t
-        INNER JOIN TramiteINE i ON i.ID_Tramite = t.ID_Tramite
-        WHERE t.ID_Usuario = @id", conn);
-
-            cmd.Parameters.AddWithValue("@id", IdUsuario);
-
-            using var rd = await cmd.ExecuteReaderAsync();
-            while (await rd.ReadAsync())
+            var lista = new List<TramiteINEItem>();
+            foreach (var tramite in tramitesResult.Models)
             {
+                var ineResult = await _supabase
+                    .From<TramiteINESupabase>()
+                    .Select("CURP")
+                    .Filter("ID_Tramite", Operator.Equals, tramite.ID_Tramite)
+                    .Get();
+                var ine = ineResult.Models.FirstOrDefault();
+
                 lista.Add(new TramiteINEItem
                 {
-                    IdTramite = rd.GetInt32(0),
-                    CURP = rd.GetString(1),
-                    Estado = rd.GetString(2),
-                    FechaCreacion = rd.GetDateTime(3)
+                    IdTramite = tramite.ID_Tramite,
+                    CURP = ine?.CURP ?? "",
+                    Estado = tramite.Estado,
+                    FechaCreacion = tramite.FechaCreacion
                 });
             }
-
             return lista;
         }
-
 
         public async Task CrearTramiteINEAsync(CrearTramiteINEDto dto)
         {
-            using SqlConnection conn = GetConnection();
-            await conn.OpenAsync();
-
-            using SqlTransaction transaction = conn.BeginTransaction();
-
-            try
+            // 1. Insertar trámite
+            var newTramite = new TramiteSupabase
             {
-                string insertTramite = @"
-INSERT INTO Tramites (ID_Usuario, TipoTramite)
-OUTPUT INSERTED.ID_Tramite
-VALUES (@ID_Usuario, 'INE')";
+                ID_Usuario = dto.IdUsuario,
+                TipoTramite = "INE",
+                Estado = "Registrado",
+                FechaCreacion = DateTime.UtcNow
+            };
+            
+            var insertedTramite = await _supabase.From<TramiteSupabase>().Insert(newTramite);
+            int idTramite = insertedTramite.Models.First().ID_Tramite;
 
-                int idTramite;
-
-                using (SqlCommand cmd = new SqlCommand(insertTramite, conn, transaction))
-                {
-                    cmd.Parameters.Add("@ID_Usuario", SqlDbType.Int).Value = dto.IdUsuario;
-                    idTramite = (int)await cmd.ExecuteScalarAsync();
-                }
-
-                string insertINE = @"
-INSERT INTO TramiteINE
-(ID_Tramite, CURP, ActaNacimiento, ComprobanteDomicilio, Identificacion)
-VALUES
-(@ID_Tramite, @CURP, @Acta, @Comprobante, @Identificacion)";
-
-                using (SqlCommand cmd = new SqlCommand(insertINE, conn, transaction))
-                {
-                    cmd.Parameters.Add("@ID_Tramite", SqlDbType.Int).Value = idTramite;
-                    cmd.Parameters.Add("@CURP", SqlDbType.VarChar, 18).Value = dto.CURP;
-
-                    cmd.Parameters.Add("@Acta", SqlDbType.VarBinary).Value = dto.ActaNacimiento;
-                    cmd.Parameters.Add("@Comprobante", SqlDbType.VarBinary).Value = dto.ComprobanteDomicilio;
-                    cmd.Parameters.Add("@Identificacion", SqlDbType.VarBinary).Value = dto.Identificacion;
-
-                    await cmd.ExecuteNonQueryAsync();
-                }
-
-                transaction.Commit();
-            }
-            catch
+            // 2. Insertar datos INE
+            var newINE = new TramiteINESupabase
             {
-                transaction.Rollback();
-                throw;
-            }
+                ID_Tramite = idTramite,
+                CURP = dto.CURP,
+                ActaNacimiento = dto.ActaNacimiento,
+                ComprobanteDomicilio = dto.ComprobanteDomicilio,
+                Identificacion = dto.Identificacion
+            };
+            
+            await _supabase.From<TramiteINESupabase>().Insert(newINE);
         }
 
-
+        // ===================== TRÁMITES GENERALES =====================
 
         public async Task<List<TramiteModel>> GetTramitesUsuarioAsync(int idUsuario)
         {
+            var result = await _supabase
+                .From<TramiteSupabase>()
+                .Select("ID_Tramite, TipoTramite, Estado, FechaCreacion")
+                .Filter("ID_Usuario", Operator.Equals, idUsuario)
+                .Order("FechaCreacion", Ordering.Descending)
+                .Get();
+
             var lista = new List<TramiteModel>();
-
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            string query = @"
-SELECT 
-    ID_Tramite,
-    TipoTramite,
-    Estado,
-    FechaCreacion
-FROM Tramites
-WHERE ID_Usuario = @id
-ORDER BY FechaCreacion DESC";
-
-            using var cmd = new SqlCommand(query, conn);
-            cmd.Parameters.AddWithValue("@id", idUsuario);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
+            foreach (var tramite in result.Models)
             {
                 lista.Add(new TramiteModel
                 {
-                    ID_Tramite = reader.GetInt32(0),
-                    TipoTramite = reader.GetString(1),
-                    Estado = reader.GetString(2),
-                    FechaCreacion = reader.GetDateTime(3)
+                    ID_Tramite = tramite.ID_Tramite,
+                    TipoTramite = tramite.TipoTramite,
+                    Estado = tramite.Estado,
+                    FechaCreacion = tramite.FechaCreacion
                 });
             }
-
             return lista;
         }
-
-
 
         public async Task<List<UsuarioItem>> ObtenerUsuariosAsync()
         {
+            var result = await _supabase
+                .From<UsuarioSupabase>()
+                .Select("ID_Usuario, Nombre, ApellidoPaterno, Email")
+                .Get();
+
             var lista = new List<UsuarioItem>();
-
-            using var con = GetConnection();
-
-            string q = @"
-SELECT 
-    ID_Usuario,
-    Nombre + ' ' + ApellidoPaterno AS NombreCompleto,
-    Email
-FROM Usuarios";
-
-            using var cmd = new SqlCommand(q, con);
-
-            await con.OpenAsync();
-            using var rd = await cmd.ExecuteReaderAsync();
-
-            while (await rd.ReadAsync())
+            foreach (var usuario in result.Models)
             {
                 lista.Add(new UsuarioItem
                 {
-                    ID_Usuario = rd.GetInt32(0),
-                    NombreCompleto = rd.GetString(1),
-                    Email = rd.GetString(2)
+                    ID_Usuario = usuario.ID_Usuario,
+                    NombreCompleto = $"{usuario.Nombre} {usuario.ApellidoPaterno}",
+                    Email = usuario.Email
                 });
             }
-
-            return lista;
-        }
-
-        public async Task CrearTramiteCompraventaAsync(CrearTramiteCompraventaDto dto)
-        {
-            using SqlConnection conn = GetConnection();
-            await conn.OpenAsync();
-
-            using SqlTransaction tx = conn.BeginTransaction();
-
-            try
-            {
-                // 1️⃣ Crear registro en Tramites
-                string qTramite = @"
-INSERT INTO Tramites (ID_Usuario, TipoTramite)
-OUTPUT INSERTED.ID_Tramite
-VALUES (@ID_Usuario, 'COMPRAVENTA')";
-
-                int idTramite;
-
-                using (SqlCommand cmd = new SqlCommand(qTramite, conn, tx))
-                {
-                    cmd.Parameters.Add("@ID_Usuario", SqlDbType.Int)
-                        .Value = dto.IdUsuario;
-
-                    idTramite = (int)await cmd.ExecuteScalarAsync();
-                }
-
-                // 2️⃣ Generar PDF en backend
-                byte[] contratoGenerado = ContratoPdfGenerator.GenerarContrato(
-                    dto.Vendedor,
-                    dto.Comprador,
-                    dto.TipoBien,
-                    dto.Monto
-                );
-
-                // 3️⃣ Insertar en TramiteCompraventa
-                string qCompra = @"
-INSERT INTO TramiteCompraventa
-(
-    ID_Tramite, 
-    TipoBien, 
-    Vendedor, 
-    Comprador, 
-    Monto, 
-    ContratoPDF, 
-    IdentificacionVendedor, 
-    IdentificacionComprador
-)
-VALUES
-(
-    @ID_Tramite, 
-    @TipoBien, 
-    @Vendedor, 
-    @Comprador, 
-    @Monto, 
-    @ContratoPDF, 
-    @IdVendedor, 
-    @IdComprador
-)";
-
-                using (SqlCommand cmd = new SqlCommand(qCompra, conn, tx))
-                {
-                    cmd.Parameters.Add("@ID_Tramite", SqlDbType.Int)
-                        .Value = idTramite;
-
-                    cmd.Parameters.Add("@TipoBien", SqlDbType.VarChar, 30)
-                        .Value = dto.TipoBien ?? (object)DBNull.Value;
-
-                    cmd.Parameters.Add("@Vendedor", SqlDbType.NVarChar, 150)
-                        .Value = dto.Vendedor ?? (object)DBNull.Value;
-
-                    cmd.Parameters.Add("@Comprador", SqlDbType.NVarChar, 150)
-                        .Value = dto.Comprador ?? (object)DBNull.Value;
-
-                    var paramMonto = cmd.Parameters.Add("@Monto", SqlDbType.Decimal);
-                    paramMonto.Precision = 18;
-                    paramMonto.Scale = 2;
-                    paramMonto.Value = dto.Monto;
-
-                    cmd.Parameters.Add("@ContratoPDF", SqlDbType.VarBinary)
-                        .Value = contratoGenerado ?? (object)DBNull.Value;
-
-                    cmd.Parameters.Add("@IdVendedor", SqlDbType.VarBinary)
-                        .Value = dto.IdentificacionVendedor ?? (object)DBNull.Value;
-
-                    cmd.Parameters.Add("@IdComprador", SqlDbType.VarBinary)
-                        .Value = dto.IdentificacionComprador ?? (object)DBNull.Value;
-
-                    await cmd.ExecuteNonQueryAsync();
-                }
-
-                tx.Commit();
-            }
-            catch
-            {
-                tx.Rollback();
-                throw;
-            }
-        }
-        public async Task<List<ContratoItemDto>> ObtenerMisContratosCompreventaAsync(int idUsuario)
-        {
-            var lista = new List<ContratoItemDto>();
-
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            var cmd = new SqlCommand(@"
-        SELECT ID_Tramite, TipoTramite, Estado, FechaCreacion
-        FROM Tramites
-        WHERE ID_Usuario = @id
-        AND TipoTramite IN ('COMPRAVENTA')
-        ORDER BY FechaCreacion DESC", conn);
-
-            cmd.Parameters.Add("@id", SqlDbType.Int).Value = idUsuario;
-
-            using var rd = await cmd.ExecuteReaderAsync();
-
-            while (await rd.ReadAsync())
-            {
-                lista.Add(new ContratoItemDto
-                {
-                    ID_Tramite = rd.GetInt32(0),
-                    TipoTramite = rd.GetString(1),
-                    Estado = rd.IsDBNull(2) ? "" : rd.GetString(2),
-                    FechaCreacion = rd.GetDateTime(3)
-                });
-            }
-
-            return lista;
-        }
-        public async Task<List<ContratoItemDto>> ObtenerMisTestamentosAsync(int idUsuario)
-        {
-            var lista = new List<ContratoItemDto>();
-
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            var cmd = new SqlCommand(@"
-        SELECT ID_Tramite, TipoTramite, Estado, FechaCreacion
-        FROM Tramites
-        WHERE ID_Usuario = @id
-        AND TipoTramite IN ('TESTAMENTO')
-        ORDER BY FechaCreacion DESC", conn);
-
-            cmd.Parameters.Add("@id", SqlDbType.Int).Value = idUsuario;
-
-            using var rd = await cmd.ExecuteReaderAsync();
-
-            while (await rd.ReadAsync())
-            {
-                lista.Add(new ContratoItemDto
-                {
-                    ID_Tramite = rd.GetInt32(0),
-                    TipoTramite = rd.GetString(1),
-                    Estado = rd.IsDBNull(2) ? "" : rd.GetString(2),
-                    FechaCreacion = rd.GetDateTime(3)
-                });
-            }
-
-            return lista;
-        }
-
-        public async Task<ContratoCompletoDto> ObtenerContratoCompletoAsync(int idTramite)
-        {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            string sql = @" 
-SELECT 
-    t.ID_Tramite,
-    t.TipoTramite,
-    t.Estado,
-    t.Observaciones,
-    t.FechaCreacion,
-
-    i.CURP,
-    i.ActaNacimiento,
-    i.ComprobanteDomicilio,
-    i.Identificacion,
-
-    c.Vendedor,
-    c.Comprador,
-    c.TipoBien,
-    c.Monto,
-    c.ContratoPDF,
-    c.IdentificacionVendedor,
-    c.IdentificacionComprador,
-
-    te.EstadoCivil,
-    te.TieneHijos,
-    te.NumeroHijos,
-    te.BienesDeclarados,
-
-    s.TipoSucesion,
-    s.NombreFallecido,
-    s.FechaDefuncion,
-    s.NumeroHerederos
-
-FROM Tramites t
-LEFT JOIN TramiteINE i ON i.ID_Tramite = t.ID_Tramite
-LEFT JOIN TramiteCompraventa c ON c.ID_Tramite = t.ID_Tramite
-LEFT JOIN TramiteTestamento te ON te.ID_Tramite = t.ID_Tramite
-LEFT JOIN TramiteSucesion s ON s.ID_Tramite = t.ID_Tramite
-WHERE t.ID_Tramite = @id";
-
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.Add("@id", SqlDbType.Int).Value = idTramite;
-
-            using var rd = await cmd.ExecuteReaderAsync();
-            if (!await rd.ReadAsync()) return null;
-
-            var contrato = new ContratoCompletoDto
-            {
-                IdTramite = rd.GetInt32(0),
-                TipoTramite = rd.GetString(1),
-                Estado = rd.IsDBNull(2) ? "" : rd.GetString(2),
-                Observaciones = rd.IsDBNull(3) ? "" : rd.GetString(3),
-                Fecha = rd.GetDateTime(4),
-
-                CURP = rd.IsDBNull(5) ? null : rd.GetString(5),
-                ActaNacimientoBase64 = rd.IsDBNull(6) ? null : Convert.ToBase64String((byte[])rd[6]),
-                ComprobanteDomicilioBase64 = rd.IsDBNull(7) ? null : Convert.ToBase64String((byte[])rd[7]),
-                IdentificacionBase64 = rd.IsDBNull(8) ? null : Convert.ToBase64String((byte[])rd[8]),
-
-                Vendedor = rd.IsDBNull(9) ? null : rd.GetString(9),
-                Comprador = rd.IsDBNull(10) ? null : rd.GetString(10),
-                TipoBien = rd.IsDBNull(11) ? null : rd.GetString(11),
-                Monto = rd.IsDBNull(12) ? null : rd.GetDecimal(12),
-                ContratoPDFBase64 = rd.IsDBNull(13) ? null : Convert.ToBase64String((byte[])rd[13]),
-                IdentificacionVendedorBase64 = rd.IsDBNull(14) ? null : Convert.ToBase64String((byte[])rd[14]),
-                IdentificacionCompradorBase64 = rd.IsDBNull(15) ? null : Convert.ToBase64String((byte[])rd[15]),
-
-                EstadoCivil = rd.IsDBNull(16) ? null : rd.GetString(16),
-                TieneHijos = rd.IsDBNull(17) ? null : rd.GetBoolean(17),
-                NumeroHijos = rd.IsDBNull(18) ? null : rd.GetInt32(18),
-                BienesDeclarados = rd.IsDBNull(19) ? null : rd.GetString(19),
-
-                TipoSucesion = rd.IsDBNull(20) ? null : rd.GetString(20),
-                NombreFallecido = rd.IsDBNull(21) ? null : rd.GetString(21),
-                FechaDefuncion = rd.IsDBNull(22) ? null : rd.GetDateTime(22),
-                NumeroHerederos = rd.IsDBNull(23) ? null : rd.GetInt32(23)
-            };
-
-            return contrato;
-        }
-        public async Task<List<CompraventaDetalleDto>> ObtenerPendientesAsync()
-        {
-            var lista = new List<CompraventaDetalleDto>();
-
-            using var conn = GetConnection();
-
-            string query = @"
-SELECT t.ID_Tramite, c.ID_Compraventa,
-       c.TipoBien, c.Monto,
-       c.Comprador, c.Vendedor,
-       c.IdentificacionVendedor,
-       c.IdentificacionComprador,
-       c.ContratoPDF,
-       u.Email
-FROM dbo.Tramites t
-INNER JOIN dbo.TramiteCompraventa c ON t.ID_Tramite = c.ID_Tramite
-INNER JOIN dbo.Usuarios u ON t.ID_Usuario = u.ID_Usuario
-WHERE t.Estado = @estado";
-
-            using SqlCommand cmd = new SqlCommand(query, conn);
-            cmd.Parameters.AddWithValue("@estado", "Registrado");
-
-            await conn.OpenAsync();
-            var reader = await cmd.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
-            {
-                lista.Add(new CompraventaDetalleDto
-                {
-                    ID_Tramite = (int)reader["ID_Tramite"],
-                    ID_Compraventa = (int)reader["ID_Compraventa"],
-                    TipoBien = reader["TipoBien"].ToString(),
-                    Monto = (decimal)reader["Monto"],
-                    Comprador = reader["Comprador"].ToString(),
-                    Vendedor = reader["Vendedor"].ToString(),
-                    IdentificacionVendedor = reader["IdentificacionVendedor"] as byte[],
-                    IdentificacionComprador = reader["IdentificacionComprador"] as byte[],
-                    ContratoPDF = reader["ContratoPDF"] as byte[],
-                    CorreoUsuario = reader["Email"].ToString()
-                });
-            }
-
-            return lista;
-        }
-
-        // ===============================
-        // 🔹 OBTENER DETALLE
-        // ===============================
-        public async Task<CompraventaDetalleDto> ObtenerDetalleAsync(int idTramite)
-        {
-            using var conn = GetConnection();
-
-            string query = @"
-SELECT t.ID_Tramite, c.ID_Compraventa,
-       c.TipoBien, c.Monto,
-       c.Comprador, c.Vendedor,
-       c.IdentificacionVendedor,
-       c.IdentificacionComprador,
-       c.ContratoPDF,
-       u.Email
-FROM dbo.Tramites t
-INNER JOIN dbo.TramiteCompraventa c ON t.ID_Tramite = c.ID_Tramite
-INNER JOIN dbo.Usuarios u ON t.ID_Usuario = u.ID_Usuario
-WHERE t.ID_Tramite = @id";
-
-            using SqlCommand cmd = new SqlCommand(query, conn);
-            cmd.Parameters.AddWithValue("@id", idTramite);
-
-            await conn.OpenAsync();
-            var reader = await cmd.ExecuteReaderAsync();
-
-            if (await reader.ReadAsync())
-            {
-                return new CompraventaDetalleDto
-                {
-                    ID_Tramite = (int)reader["ID_Tramite"],
-                    ID_Compraventa = (int)reader["ID_Compraventa"],
-                    TipoBien = reader["TipoBien"].ToString(),
-                    Monto = (decimal)reader["Monto"],
-                    Comprador = reader["Comprador"].ToString(),
-                    Vendedor = reader["Vendedor"].ToString(),
-                    IdentificacionVendedor = reader["IdentificacionVendedor"] as byte[],
-                    IdentificacionComprador = reader["IdentificacionComprador"] as byte[],
-                    ContratoPDF = reader["ContratoPDF"] as byte[],
-                    CorreoUsuario = reader["Email"].ToString()
-                };
-            }
-
-            return null;
-        }
-
-        // ===============================
-        // 🔹 ACEPTAR / RECHAZAR
-        // ===============================
-        public async Task CambiarEstadoAsync(int idTramite, string nuevoEstado)
-        {
-            using var conn = GetConnection();
-            await conn.OpenAsync();
-
-            // 1️⃣ Actualizar estado
-            string update = @"UPDATE Tramites
-                          SET Estado = @estado,
-                              FechaActualizacion = GETDATE()
-                          WHERE ID_Tramite = @id";
-
-            using SqlCommand cmd = new SqlCommand(update, conn);
-            cmd.Parameters.AddWithValue("@estado", nuevoEstado);
-            cmd.Parameters.AddWithValue("@id", idTramite);
-
-            await cmd.ExecuteNonQueryAsync();
-
-            // 2️⃣ Obtener correo
-            string correoQuery = @"
-            SELECT u.Email
-            FROM Tramites t
-            INNER JOIN Usuarios u ON t.ID_Usuario = u.ID_Usuario
-            WHERE t.ID_Tramite = @id";
-
-            using SqlCommand cmdCorreo = new SqlCommand(correoQuery, conn);
-            cmdCorreo.Parameters.AddWithValue("@id", idTramite);
-
-            string correo = (string)await cmdCorreo.ExecuteScalarAsync();
-
-            // 3️⃣ Enviar correo usando TU EmailService
-            string asunto = "Resultado de tu contrato de compraventa";
-            string mensaje = $"Tu contrato fue {nuevoEstado} correctamente.";
-            var emailService = new EmailService();
-
-            await emailService.EnviarCorreoAsync(correo, asunto, mensaje);
-        }
-
-        // ===================== Funciones Admin =====================
-
-        public async Task<List<TrabajadorItemDto>> ObtenerTrabajadoresAsync()
-        {
-            var lista = new List<TrabajadorItemDto>();
-
-            using var con = GetConnection();
-
-            string q = @"
-        SELECT 
-            ID_Trabajador,
-            CONCAT(Nombre,' ',ApellidoPaterno) AS NombreCompleto,
-            Email
-        FROM Trabajadores
-        ORDER BY Nombre";
-
-            using var cmd = new SqlCommand(q, con);
-
-            await con.OpenAsync();
-
-            using var rd = await cmd.ExecuteReaderAsync();
-
-            while (await rd.ReadAsync())
-            {
-                lista.Add(new TrabajadorItemDto
-                {
-                    ID_Trabajador = rd.GetInt32(0),
-                    NombreCompleto = rd.IsDBNull(1) ? "" : rd.GetString(1),
-                    Email = rd.IsDBNull(2) ? "" : rd.GetString(2)
-                });
-            }
-
-            return lista;
-        }
-
-        //eliminar usuarios
-        public async Task<bool> EliminarUsuarioAsync(int id)
-        {
-            using var con = GetConnection();
-            await con.OpenAsync();
-
-            // 1️⃣ Eliminar TramiteINE (hijos de Tramites)
-            string q1 = @"
-        DELETE FROM TramiteINE
-        WHERE ID_Tramite IN (
-            SELECT ID_Tramite FROM Tramites WHERE ID_Usuario = @id
-        )";
-
-            using (var cmd1 = new SqlCommand(q1, con))
-            {
-                cmd1.Parameters.AddWithValue("@id", id);
-                await cmd1.ExecuteNonQueryAsync();
-            }
-
-            // 2️⃣ Eliminar Tramites
-            string q2 = "DELETE FROM Tramites WHERE ID_Usuario = @id";
-
-            using (var cmd2 = new SqlCommand(q2, con))
-            {
-                cmd2.Parameters.AddWithValue("@id", id);
-                await cmd2.ExecuteNonQueryAsync();
-            }
-
-            // 3️⃣ Eliminar Usuario
-            string q3 = "DELETE FROM Usuarios WHERE ID_Usuario = @id";
-
-            using (var cmd3 = new SqlCommand(q3, con))
-            {
-                cmd3.Parameters.AddWithValue("@id", id);
-                int filas = await cmd3.ExecuteNonQueryAsync();
-                return filas > 0;
-            }
-        }
-
-        public async Task<bool> EliminarTrabajadorAsync(int id)
-        {
-            using var con = GetConnection();
-
-            string q = "DELETE FROM Trabajadores WHERE ID_Trabajador = @id";
-
-            using var cmd = new SqlCommand(q, con);
-
-            cmd.Parameters.Add("@id", SqlDbType.Int).Value = id;
-
-            await con.OpenAsync();
-
-            int filasAfectadas = await cmd.ExecuteNonQueryAsync();
-
-            return filasAfectadas > 0;
-        }
-
-        //agregar trabajador
-        public async Task<bool> TrabajadorExisteAsync(string email)
-        {
-            string query = @"
-        IF EXISTS (SELECT 1 FROM Trabajadores WHERE Email = @e)
-            SELECT 1
-        ELSE
-            SELECT 0";
-
-            using var con = GetConnection();
-            using var cmd = new SqlCommand(query, con);
-
-            cmd.Parameters.Add("@e", SqlDbType.VarChar, 150).Value = email;
-
-            await con.OpenAsync();
-
-            int result = (int)await cmd.ExecuteScalarAsync();
-
-            return result == 1;
-        }
-        public async Task<int> InsertarTrabajadorAsync(CrearTrabajadorDto dto)
-        {
-            string query = @"
-        INSERT INTO Trabajadores
-        (Nombre, ApellidoPaterno, ApellidoMaterno, Email, Cargo, Departamento, PasswordHash)
-        OUTPUT INSERTED.ID_Trabajador
-        VALUES
-        (@n, @ap, @am, @e, @c, @d, @p)";
-
-            using var con = GetConnection();
-            using var cmd = new SqlCommand(query, con);
-
-            cmd.Parameters.Add("@n", SqlDbType.VarChar, 100).Value = dto.Nombre;
-            cmd.Parameters.Add("@ap", SqlDbType.VarChar, 100).Value = dto.ApellidoPaterno;
-            cmd.Parameters.Add("@am", SqlDbType.VarChar, 100).Value = dto.ApellidoMaterno;
-            cmd.Parameters.Add("@e", SqlDbType.VarChar, 150).Value = dto.Email;
-            cmd.Parameters.Add("@c", SqlDbType.VarChar, 100).Value = dto.Cargo;
-            cmd.Parameters.Add("@d", SqlDbType.VarChar, 100).Value = dto.Departamento;
-
-            // 🔥 Guardar contraseña directa (SIN HASH)
-            cmd.Parameters.Add("@p", SqlDbType.VarChar, 500).Value = dto.Password;
-
-            await con.OpenAsync();
-
-            int idGenerado = (int)await cmd.ExecuteScalarAsync();
-
-            return idGenerado;
-        }
-    }
-
-}
-
+            return
