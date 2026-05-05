@@ -2,15 +2,15 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copiar archivo del proyecto (nota: el nombre tiene espacios)
-COPY "Moneki api.csproj" .
-RUN dotnet restore "Moneki api.csproj"
+# Copiar archivo del proyecto (ahora sin espacios)
+COPY Moneki_api.csproj .
+RUN dotnet restore
 
 # Copiar todo el código
 COPY . .
 
 # Publicar la aplicación
-RUN dotnet publish "Moneki api.csproj" -c Release -o /app/publish
+RUN dotnet publish -c Release -o /app/publish
 
 # Etapa 2: Ejecución
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
@@ -26,4 +26,4 @@ COPY --from=build /app/publish .
 # Variables de entorno
 ENV ASPNETCORE_URLS=http://+:80
 
-ENTRYPOINT ["dotnet", "Moneki api.dll"]
+ENTRYPOINT ["dotnet", "Moneki_api.dll"]
