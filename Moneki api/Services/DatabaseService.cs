@@ -14,24 +14,18 @@ using System.Threading.Tasks;
 #pragma warning disable CS8601, CS8603, CS8604, CS8605, CS8625
 namespace Moneki_api.Services
 {
-     public abstract class ConnectionToSQL
+   public abstract class ConnectionToSQL
     {
-        private readonly string _connectionString;
-
-        protected ConnectionToSQL()
-        {
-            // Leer desde variable de entorno de Render
-            _connectionString = Environment.GetEnvironmentVariable("SUPABASE_CONNECTION_STRING")
-                ?? throw new InvalidOperationException(
-                    "SUPABASE_CONNECTION_STRING environment variable is not set. " +
-                    "Please configure it in Render Dashboard.");
-        }
+        // 🔥 Convertido de: postgresql://postgres:MiClave123@db.wrcrgyboaketmoppnjzh.supabase.co:5432/postgres
+        private readonly string connectionString = 
+            "Host=db.wrcrgyboaketmoppnjzh.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=u-X2MTX/B+YF9fx;SSL Mode=Require;Trust Server Certificate=true;";
 
         protected NpgsqlConnection GetConnection()
         {
-            return new NpgsqlConnection(_connectionString);
+            return new NpgsqlConnection(connectionString);
         }
     }
+    
 
     public class DatabaseService : ConnectionToSQL
     {
