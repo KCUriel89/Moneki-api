@@ -11,7 +11,7 @@ using System.Data;
 using System.Text;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
-
+#pragma warning disable CS8601, CS8603, CS8604, CS8605, CS8625
 namespace Moneki_api.Services
 {
     public abstract class ConnectionToSQL
