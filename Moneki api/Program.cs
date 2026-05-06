@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Moneki_api.Services;
+using Proyecto_servicio.Helpers;  // ← IMPORTANTE: Agregar este using para EmailService
 using Supabase;
 using System;
 
@@ -12,11 +13,11 @@ var builder = WebApplication.CreateBuilder(args);
 // Obtener las credenciales de Supabase (desde variables de entorno en Render)
 var supabaseUrl = Environment.GetEnvironmentVariable("SUPABASE_URL") ?? 
                   builder.Configuration["Supabase:Url"] ??
-                  "https://tu-proyecto.supabase.co"; // Reemplaza si no usas variables
+                  "https://tu-proyecto.supabase.co";
 
 var supabaseKey = Environment.GetEnvironmentVariable("SUPABASE_KEY") ?? 
                   builder.Configuration["Supabase:Key"] ??
-                  "tu-clave-anon-publica"; // Reemplaza si no usas variables
+                  "tu-clave-anon-publica";
 
 // Crear el cliente de Supabase
 var supabaseClient = new Client(supabaseUrl, supabaseKey);
@@ -36,13 +37,13 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Tu DatabaseService (necesita ser modificado para usar Supabase)
+// Tu DatabaseService
 builder.Services.AddScoped<DatabaseService>();
 
-// Agregar EmailService si lo usas
+// Agregar EmailService
 builder.Services.AddScoped<EmailService>();
 
-// Configurar CORS (importante para que tu frontend pueda llamar a la API)
+// Configurar CORS
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
@@ -69,13 +70,10 @@ if (app.Environment.IsDevelopment())
 // Habilitar CORS (debe ir ANTES de los controladores)
 app.UseCors("AllowAll");
 
-// Redirección HTTPS (Render ya maneja SSL, esto es opcional)
-// app.UseHttpsRedirection(); // Comenta si da problemas en Render
-
 app.UseAuthorization();
 app.MapControllers();
 
-// Endpoint de health check para Render (¡importante!)
+// Endpoint de health check para Render
 app.MapGet("/", () => Results.Ok(new { 
     message = "API Moneki funcionando", 
     status = "ok", 
