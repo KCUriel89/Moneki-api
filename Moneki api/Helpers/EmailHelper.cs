@@ -1,13 +1,14 @@
-﻿using MailKit.Security;
+using MailKit.Security;
 using Moneki_api.Services;
 using MailKit.Net.Smtp;
-using Microsoft.Data.SqlClient;
+using Npgsql;
+using NpgsqlTypes;
 using MimeKit;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-//api
+
 namespace Proyecto_servicio.Helpers
 {
     public class EmailService
@@ -15,7 +16,7 @@ namespace Proyecto_servicio.Helpers
         private readonly DatabaseService _db;
 
         private readonly string correoOrigen = "ipncecyt13informatica.pa@gmail.com";
-        private readonly string contraseñaApp = "frut jfbb nuys lcci"; // TU CONTRASEÑA DE APLICACIÓN
+        private readonly string contraseñaApp = "frut jfbb nuys lcci";
         private readonly string servidor = "smtp.gmail.com";
         private readonly int puerto = 587;
 
@@ -44,15 +45,14 @@ namespace Proyecto_servicio.Helpers
             await smtp.SendAsync(email);
             await smtp.DisconnectAsync(true);
 
-            // ✅ 3. Guardar registro en tu SQL Server
-            string query = @"INSERT INTO CorreosEnviados (Destino, Asunto)
-                             VALUES (@d, @a)";
+            // ✅ 3. Guardar registro en PostgreSQL
+            string query = @"INSERT INTO CorreosEnviados (Destino, Asunto, Fecha)
+                             VALUES (@d, @a, NOW())";
 
             await _db.ExecuteAsync(query,
-                new SqlParameter("@d", correoDestino),
-                new SqlParameter("@a", asunto)
+                new NpgsqlParameter("@d", correoDestino),
+                new NpgsqlParameter("@a", asunto)
             );
         }
     }
-
 }
