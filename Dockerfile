@@ -1,26 +1,26 @@
-# Usa la imagen SDK para compilar
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copia el archivo del proyecto (que está dentro de la carpeta "Moneki api")
-COPY "Moneki api/Moneki_api.csproj" "Moneki api/"
-RUN dotnet restore "Moneki api/Moneki_api.csproj"
-
-# Copia todo el resto del código fuente a la carpeta correspondiente
+# Copiar TODO el contenido (esto incluye la carpeta Moneki api)
 COPY . .
 
-# Compila y publica la aplicación
-RUN dotnet publish "Moneki api/Moneki_api.csproj" -c Release -o /app/publish
+# Cambiar al directorio correcto donde está el .csproj
+WORKDIR /src/Moneki\ api
 
-# Usa la imagen runtime más ligera para ejecutar la app
+# Restaurar dependencias
+RUN dotnet restore "Moneki_api.csproj"
+
+# Publicar la aplicación
+RUN dotnet publish "Moneki_api.csproj" -c Release -o /app/publish
+
+# Etapa runtime
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 
-# Copia los archivos publicados desde la etapa de build
+# Copiar la aplicación publicada
 COPY --from=build /app/publish .
 
-# Expone el puerto 80 (Render usará este)
 EXPOSE 80
 
-# Comando para iniciar la aplicación
+# Comando de entrada
 ENTRYPOINT ["dotnet", "Moneki_api.dll"]
