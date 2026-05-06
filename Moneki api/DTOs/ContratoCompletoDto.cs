@@ -1,4 +1,5 @@
-﻿namespace Moneki_api.DTOs
+#pragma warning disable CS8618
+namespace Moneki_api.DTOs
 {
     public class ContratoCompletoDto
     {
