@@ -17,9 +17,8 @@ namespace Moneki_api.Services
     public abstract class ConnectionToSQL
     {
         // 🔥 CAMBIA ESTA CADENA por la de Supabase
-        private readonly string connectionString =
-           "Host=db.abcdefghijklmnopqrst.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=TU_PASSWORD;SSL Mode=Require;Trust Server Certificate=true;";
-
+        pprivate readonly string connectionString = 
+        "Host=db.wrcrgyboaketmoppnjzh.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=[YOUR-PASSWORD];SSL Mode=Require;Trust Server Certificate=true;";
         protected NpgsqlConnection GetConnection()
         {
             return new NpgsqlConnection(connectionString);
