@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 //app
+#pragma warning disable CS8618
 namespace Proyecto_servicio.Helpers
 {
     public static class UserSession
