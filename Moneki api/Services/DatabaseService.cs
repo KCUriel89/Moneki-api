@@ -1,4 +1,5 @@
-using Microsoft.Data.SqlClient;
+using Npgsql;
+using NpgsqlTypes;
 using Moneki_api.Controllers;
 using Moneki_api.DTOs;
 using Moneki_api.Helpers;
@@ -9,23 +10,20 @@ using System.Collections.Generic;
 using System.Data;
 using System.Text;
 using System.Security.Cryptography;
-using System.Text;
 using System.Threading.Tasks;
+
 namespace Moneki_api.Services
 {
     public abstract class ConnectionToSQL
     {
+        // 🔥 CAMBIA ESTA CADENA por la de Supabase
         private readonly string connectionString =
-           "Server=DESKTOP-38IFLSE\\KCSQL;Database=Moneki;Trusted_Connection=True;TrustServerCertificate=True;";
-        //escritorio DESKTOP-38IFLSE\KCSQL
-        //laptop DESKTOP-N3GOVNS\\KCU_PRUEBA
+           "Host=db.abcdefghijklmnopqrst.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=TU_PASSWORD;SSL Mode=Require;Trust Server Certificate=true;";
 
-        protected SqlConnection GetConnection()
+        protected NpgsqlConnection GetConnection()
         {
-            return new SqlConnection(connectionString);
+            return new NpgsqlConnection(connectionString);
         }
-
-
     }
 
     public class DatabaseService : ConnectionToSQL
@@ -37,12 +35,15 @@ namespace Moneki_api.Services
             var hash = sha.ComputeHash(bytes);
             return Convert.ToBase64String(hash);
         }
+
+        // ===================== TESTAMENTOS =====================
+
         public async Task<TestamentoDetalles> ObtenerDetalleTestamentoAsync(int idTramite)
         {
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            var cmd = new NpgsqlCommand(@"
     SELECT 
         T.Estado,
         TT.EstadoCivil,
@@ -50,7 +51,7 @@ namespace Moneki_api.Services
         TT.NumeroHijos,
         TT.BienesDeclarados,
         TT.Pdf,
-        U.Nombre + ' ' + U.ApellidoPaterno + ' ' + U.ApellidoMaterno AS NombreCompleto
+        U.Nombre || ' ' || U.ApellidoPaterno || ' ' || U.ApellidoMaterno AS NombreCompleto
     FROM Tramites T
     JOIN TramiteTestamento TT ON T.ID_Tramite = TT.ID_Tramite
     JOIN Usuarios U ON T.ID_Usuario = U.ID_Usuario
@@ -72,52 +73,54 @@ namespace Moneki_api.Services
                 NombreUsuario = rd["NombreCompleto"].ToString()
             };
         }
+
         public async Task ActualizarEstadoTramiteINEAsync(int idTramite, string estado)
         {
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            var cmd = new NpgsqlCommand(@"
 UPDATE Tramites
 SET Estado = @estado,
-    FechaActualizacion = GETDATE()
+    FechaActualizacion = NOW()
 WHERE ID_Tramite = @id", conn);
 
-            cmd.Parameters.Add("@estado", SqlDbType.VarChar).Value = estado;
-            cmd.Parameters.Add("@id", SqlDbType.Int).Value = idTramite;
+            cmd.Parameters.Add("@estado", NpgsqlDbType.Varchar).Value = estado;
+            cmd.Parameters.Add("@id", NpgsqlDbType.Integer).Value = idTramite;
 
             int filas = await cmd.ExecuteNonQueryAsync();
 
             if (filas == 0)
                 throw new Exception("No se encontró el trámite.");
         }
+
         public async Task<string?> ObtenerCorreoUsuarioPorTramiteINEAsync(int idTramite)
         {
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            var cmd = new NpgsqlCommand(@"
 SELECT U.Email
 FROM Tramites T
 INNER JOIN Usuarios U ON T.ID_Usuario = U.ID_Usuario
 INNER JOIN TramiteINE TI ON TI.ID_Tramite = T.ID_Tramite
 WHERE T.ID_Tramite = @id", conn);
 
-            cmd.Parameters.Add("@id", SqlDbType.Int).Value = idTramite;
+            cmd.Parameters.Add("@id", NpgsqlDbType.Integer).Value = idTramite;
 
             var result = await cmd.ExecuteScalarAsync();
-
             return result?.ToString();
         }
+
         public async Task ActualizarEstadoTramiteAsync(int idTramite, string estado)
         {
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            var cmd = new NpgsqlCommand(@"
     UPDATE Tramites
     SET Estado = @estado,
-        FechaActualizacion = GETDATE()
+        FechaActualizacion = NOW()
     WHERE ID_Tramite = @id", conn);
 
             cmd.Parameters.AddWithValue("@estado", estado);
@@ -131,11 +134,11 @@ WHERE T.ID_Tramite = @id", conn);
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            var cmd = new NpgsqlCommand(@"
     UPDATE Tramites
     SET Estado = 'Rechazado',
         Observaciones = @motivo,
-        FechaActualizacion = GETDATE()
+        FechaActualizacion = NOW()
     WHERE ID_Tramite = @id", conn);
 
             cmd.Parameters.AddWithValue("@motivo", motivo);
@@ -151,8 +154,7 @@ WHERE T.ID_Tramite = @id", conn);
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            var cmd = conn.CreateCommand();
-            cmd.CommandText = @"
+            var cmd = new NpgsqlCommand(@"
         SELECT
             t.ID_Tramite,
             t.Estado,
@@ -161,7 +163,7 @@ WHERE T.ID_Tramite = @id", conn);
         INNER JOIN TramiteTestamento tt 
             ON t.ID_Tramite = tt.ID_Tramite
         WHERE t.TipoTramite = 'TESTAMENTO'
-          AND t.Estado IN ('Registrado', 'En revisión')";
+          AND t.Estado IN ('Registrado', 'En revisión')", conn);
 
             using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -184,10 +186,10 @@ WHERE T.ID_Tramite = @id", conn);
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            var cmd = new NpgsqlCommand(@"
         SELECT 
             t.ID_Tramite,
-            u.Nombre + ' ' + u.ApellidoPaterno + ' ' + u.ApellidoMaterno AS NombreUsuario,
+            u.Nombre || ' ' || u.ApellidoPaterno || ' ' || u.ApellidoMaterno AS NombreUsuario,
             tt.EstadoCivil,
             tt.TieneHijos,
             tt.NumeroHijos,
@@ -217,12 +219,13 @@ WHERE T.ID_Tramite = @id", conn);
 
             return lista;
         }
+
         public async Task<byte[]?> ObtenerPdfAsync(int idTramite)
         {
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            var cmd = new NpgsqlCommand(@"
         SELECT Pdf
         FROM TramiteTestamento
         WHERE ID_Tramite = @id", conn);
@@ -236,6 +239,7 @@ WHERE T.ID_Tramite = @id", conn);
 
             return (byte[])result;
         }
+
         public async Task<List<TestamentoListaItem>> ObtenerTestamentosUsuarioAsync(int idUsuario)
         {
             var lista = new List<TestamentoListaItem>();
@@ -243,15 +247,14 @@ WHERE T.ID_Tramite = @id", conn);
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            var cmd = conn.CreateCommand();
-            cmd.CommandText = @"
+            var cmd = new NpgsqlCommand(@"
         SELECT
             t.ID_Tramite,
             t.Estado,
             tt.EstadoCivil
         FROM Tramites t
         INNER JOIN TramiteTestamento tt ON t.ID_Tramite = tt.ID_Tramite
-        WHERE t.ID_Usuario = @id";
+        WHERE t.ID_Usuario = @id", conn);
 
             cmd.Parameters.AddWithValue("@id", idUsuario);
 
@@ -269,28 +272,24 @@ WHERE T.ID_Tramite = @id", conn);
             return lista;
         }
 
-
         public async Task CrearTramiteTestamentoAsync(CrearTestamentoDto dto)
         {
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            using var tx = conn.BeginTransaction();
+            using var tx = await conn.BeginTransactionAsync();
 
             try
             {
-                // 1️⃣ Crear trámite general
-                var cmdTramite = new SqlCommand(@"
+                var cmdTramite = new NpgsqlCommand(@"
 INSERT INTO Tramites (ID_Usuario, TipoTramite, Estado, FechaCreacion)
-OUTPUT INSERTED.ID_Tramite
-VALUES (@usuario, 'TESTAMENTO', 'Registrado', GETDATE())",
-                    conn, tx);
+VALUES (@usuario, 'TESTAMENTO', 'Registrado', NOW())
+RETURNING ID_Tramite", conn, tx);
 
                 cmdTramite.Parameters.AddWithValue("@usuario", dto.IdUsuario);
 
                 int idTramite = (int)await cmdTramite.ExecuteScalarAsync();
 
-                // 2️⃣ Generar PDF
                 byte[] pdf = TestamentoPdfGenerator.GenerarTestamento(
                     dto.NombreCompleto,
                     dto.EstadoCivil,
@@ -300,8 +299,7 @@ VALUES (@usuario, 'TESTAMENTO', 'Registrado', GETDATE())",
                     dto.Fecha
                 );
 
-                // 3️⃣ Insertar datos del testamento
-                var cmdTestamento = new SqlCommand(@"
+                var cmdTestamento = new NpgsqlCommand(@"
 INSERT INTO TramiteTestamento
 (
     ID_Tramite,
@@ -319,8 +317,7 @@ VALUES
     @numHijos,
     @bienes,
     @pdf
-)",
-                    conn, tx);
+)", conn, tx);
 
                 cmdTestamento.Parameters.AddWithValue("@tramite", idTramite);
                 cmdTestamento.Parameters.AddWithValue("@estado", dto.EstadoCivil);
@@ -328,15 +325,15 @@ VALUES
                 cmdTestamento.Parameters.AddWithValue("@numHijos",
                     dto.TieneHijos ? dto.NumeroHijos : 0);
                 cmdTestamento.Parameters.AddWithValue("@bienes", dto.BienesDeclarados);
-                cmdTestamento.Parameters.Add("@pdf", SqlDbType.VarBinary).Value = pdf;
+                cmdTestamento.Parameters.Add("@pdf", NpgsqlDbType.Bytea).Value = pdf;
 
                 await cmdTestamento.ExecuteNonQueryAsync();
 
-                tx.Commit();
+                await tx.CommitAsync();
             }
             catch
             {
-                tx.Rollback();
+                await tx.RollbackAsync();
                 throw;
             }
         }
@@ -346,7 +343,7 @@ VALUES
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            using var cmd = new SqlCommand(@"
+            using var cmd = new NpgsqlCommand(@"
         SELECT u.Email
         FROM Tramites t
         INNER JOIN Usuarios u ON t.ID_Usuario = u.ID_Usuario
@@ -368,16 +365,15 @@ VALUES
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            using var transaction = conn.BeginTransaction();
+            using var transaction = await conn.BeginTransactionAsync();
 
             try
             {
-                // 🔹 1. Actualizar trámite
-                var cmd = new SqlCommand(@"
+                var cmd = new NpgsqlCommand(@"
 UPDATE Tramites
 SET Estado = 'Aceptado',
     ID_Trabajador = @trabajador,
-    FechaActualizacion = GETDATE()
+    FechaActualizacion = NOW()
 WHERE ID_Tramite = @id", conn, transaction);
 
                 cmd.Parameters.AddWithValue("@trabajador", dto.IdTrabajador);
@@ -388,17 +384,14 @@ WHERE ID_Tramite = @id", conn, transaction);
                 if (filasAfectadas == 0)
                     throw new Exception("No se encontró el trámite para actualizar.");
 
-                // 🔹 2. Obtener módulo más cercano
                 string modulo = await ObtenerModuloMasCercanoAsync(
                     new ModuloCercanoDto
                     {
                         DireccionUsuario = dto.DireccionUsuario
                     });
 
-                // 🔹 3. Confirmar cambios en BD
                 await transaction.CommitAsync();
 
-                // 🔹 4. Enviar correo (solo si todo salió bien)
                 var emailService = new EmailService();
 
                 await emailService.EnviarCorreoAsync(
@@ -419,12 +412,12 @@ WHERE ID_Tramite = @id", conn, transaction);
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            var cmd = new NpgsqlCommand(@"
 UPDATE Tramites
 SET Estado = 'Rechazado',
     ID_Trabajador = @trabajador,
     Observaciones = @motivo,
-    FechaActualizacion = GETDATE()
+    FechaActualizacion = NOW()
 WHERE ID_Tramite = @id", conn);
 
             cmd.Parameters.AddWithValue("@trabajador", dto.IdTrabajador);
@@ -448,19 +441,19 @@ MONEKI."
             );
         }
 
-
         public async Task<string> ObtenerModuloMasCercanoAsync(ModuloCercanoDto dto)
         {
             using var conn = GetConnection();
             await conn.OpenAsync();
 
             string sql = @"
-SELECT TOP 1
+SELECT
     Nombre,
     Direccion
-FROM ModulosINE";
+FROM ModulosINE
+LIMIT 1";
 
-            using var cmd = new SqlCommand(sql, conn);
+            using var cmd = new NpgsqlCommand(sql, conn);
             using var rd = await cmd.ExecuteReaderAsync();
 
             if (await rd.ReadAsync())
@@ -485,10 +478,11 @@ FROM Tramites t
 JOIN Usuarios u ON u.ID_Usuario = t.ID_Usuario
 WHERE t.ID_Tramite = @id";
 
-            using var cmd = new SqlCommand(sql, conn);
+            using var cmd = new NpgsqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("@id", idTramite);
 
-            return (string)await cmd.ExecuteScalarAsync();
+            var result = await cmd.ExecuteScalarAsync();
+            return result?.ToString() ?? "";
         }
 
         public async Task<List<TramiteINEItem>> ObtenerTramitesINEPendientesAsync()
@@ -509,7 +503,7 @@ WHERE t.ID_Tramite = @id";
         WHERE t.Estado = 'Registrado'
         ORDER BY t.FechaCreacion DESC";
 
-            using var cmd = new SqlCommand(sql, conn);
+            using var cmd = new NpgsqlCommand(sql, conn);
             using var rd = await cmd.ExecuteReaderAsync();
 
             while (await rd.ReadAsync())
@@ -527,9 +521,9 @@ WHERE t.ID_Tramite = @id";
         }
 
         public async Task ActualizarEstadoTramite(
-      int idTramite,
-      string estado,
-      string observaciones = null)
+            int idTramite,
+            string estado,
+            string observaciones = null)
         {
             using var conn = GetConnection();
             await conn.OpenAsync();
@@ -538,18 +532,19 @@ WHERE t.ID_Tramite = @id";
 UPDATE Tramites
 SET Estado = @e,
     Observaciones = @o,
-    FechaActualizacion = GETDATE()
+    FechaActualizacion = NOW()
 WHERE ID_Tramite = @id";
 
-            using var cmd = new SqlCommand(sql, conn);
+            using var cmd = new NpgsqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("@id", idTramite);
             cmd.Parameters.AddWithValue("@e", estado);
-            cmd.Parameters.AddWithValue("@o", (object?)observaciones ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@o", observaciones ?? (object)DBNull.Value);
 
             await cmd.ExecuteNonQueryAsync();
         }
 
-        /* ===================== USUARIOS ===================== */
+        // ===================== USUARIOS =====================
+
         public async Task RegisterUserAsync(
             string nombre,
             string apellidoPaterno,
@@ -564,6 +559,8 @@ WHERE ID_Tramite = @id";
             double longitud
         )
         {
+            string hashedPassword = HashPassword(password);
+            
             string query = @"
         INSERT INTO Usuarios
         (
@@ -594,17 +591,14 @@ WHERE ID_Tramite = @id";
             @Longitud
         )";
 
-            using (SqlConnection con = GetConnection())
-            using (SqlCommand cmd = new SqlCommand(query, con))
+            using (NpgsqlConnection con = GetConnection())
+            using (NpgsqlCommand cmd = new NpgsqlCommand(query, con))
             {
                 cmd.Parameters.AddWithValue("@Nombre", nombre);
                 cmd.Parameters.AddWithValue("@ApellidoPaterno", apellidoPaterno);
                 cmd.Parameters.AddWithValue("@ApellidoMaterno", apellidoMaterno);
                 cmd.Parameters.AddWithValue("@Email", email);
-
-                // 🔐 IMPORTANTE: aquí luego puedes meter hashing
-                cmd.Parameters.AddWithValue("@PasswordHash", password);
-
+                cmd.Parameters.AddWithValue("@PasswordHash", hashedPassword);
                 cmd.Parameters.AddWithValue("@Telefono", telefono ?? (object)DBNull.Value);
                 cmd.Parameters.AddWithValue("@Direccion", direccion ?? (object)DBNull.Value);
                 cmd.Parameters.AddWithValue("@FechaNacimiento", fechaNacimiento);
@@ -617,13 +611,12 @@ WHERE ID_Tramite = @id";
             }
         }
 
-
         public async Task<bool> UserExistsAsync(string email)
         {
             const string query = "SELECT COUNT(*) FROM Usuarios WHERE Email = @email";
 
             using var con = GetConnection();
-            using var cmd = new SqlCommand(query, con);
+            using var cmd = new NpgsqlCommand(query, con);
             cmd.Parameters.AddWithValue("@email", email);
 
             await con.OpenAsync();
@@ -635,14 +628,16 @@ WHERE ID_Tramite = @id";
             using var con = GetConnection();
             await con.OpenAsync();
 
+            string hashedPassword = HashPassword(dto.Password);
+            
             string query = @"
         SELECT ID_Usuario, Email
         FROM Usuarios
         WHERE Email = @Email AND PasswordHash = @Password";
 
-            using var cmd = new SqlCommand(query, con);
+            using var cmd = new NpgsqlCommand(query, con);
             cmd.Parameters.AddWithValue("@Email", dto.Email);
-            cmd.Parameters.AddWithValue("@Password", dto.Password);
+            cmd.Parameters.AddWithValue("@Password", hashedPassword);
 
             using var reader = await cmd.ExecuteReaderAsync();
 
@@ -657,7 +652,6 @@ WHERE ID_Tramite = @id";
             return null;
         }
 
-
         public async Task<bool> CorreoExisteUsuariosAsync(string correo)
         {
             if (string.IsNullOrWhiteSpace(correo))
@@ -668,10 +662,10 @@ WHERE ID_Tramite = @id";
             string query = @"
 SELECT COUNT(*)
 FROM Usuarios
-WHERE LOWER(LTRIM(RTRIM(Email))) = @correo";
+WHERE LOWER(Email) = @correo";
 
-            using SqlConnection con = GetConnection();
-            using SqlCommand cmd = new SqlCommand(query, con);
+            using NpgsqlConnection con = GetConnection();
+            using NpgsqlCommand cmd = new NpgsqlCommand(query, con);
 
             cmd.Parameters.AddWithValue("@correo", correo);
 
@@ -681,23 +675,23 @@ WHERE LOWER(LTRIM(RTRIM(Email))) = @correo";
             return count > 0;
         }
 
-
-
-        /* ===================== TRABAJADORES ===================== */
+        // ===================== TRABAJADORES =====================
 
         public async Task<(int Id, string Email)?> LoginTrabajadorEmailAsync(LoginDto dto)
         {
             using var con = GetConnection();
             await con.OpenAsync();
 
+            string hashedPassword = HashPassword(dto.Password);
+            
             string query = @"
         SELECT ID_Trabajador, Email
         FROM Trabajadores
         WHERE Email = @Email AND PasswordHash = @Password";
 
-            using var cmd = new SqlCommand(query, con);
+            using var cmd = new NpgsqlCommand(query, con);
             cmd.Parameters.AddWithValue("@Email", dto.Email);
-            cmd.Parameters.AddWithValue("@Password", dto.Password);
+            cmd.Parameters.AddWithValue("@Password", hashedPassword);
 
             using var reader = await cmd.ExecuteReaderAsync();
 
@@ -712,22 +706,23 @@ WHERE LOWER(LTRIM(RTRIM(Email))) = @correo";
             return null;
         }
 
-
-        /* ===================== ADMINISTRADORES ===================== */
+        // ===================== ADMINISTRADORES =====================
 
         public async Task<(int Id, string Email)?> LoginAdminEmailAsync(LoginDto dto)
         {
             using var con = GetConnection();
             await con.OpenAsync();
 
+            string hashedPassword = HashPassword(dto.Password);
+            
             string query = @"
         SELECT ID_Administrador, Email
         FROM Administradores
         WHERE Email = @Email AND PasswordHash = @Password";
 
-            using var cmd = new SqlCommand(query, con);
+            using var cmd = new NpgsqlCommand(query, con);
             cmd.Parameters.AddWithValue("@Email", dto.Email);
-            cmd.Parameters.AddWithValue("@Password", dto.Password);
+            cmd.Parameters.AddWithValue("@Password", hashedPassword);
 
             using var reader = await cmd.ExecuteReaderAsync();
 
@@ -742,21 +737,21 @@ WHERE LOWER(LTRIM(RTRIM(Email))) = @correo";
             return null;
         }
 
+        // ===================== RECUPERACIÓN PASSWORD =====================
 
-
-        /* ===================== RECUPERACIÓN PASSWORD ===================== */
         public async Task<int> ActualizarPasswordPorCorreoAsync(string correo, string nuevaPassword)
         {
+            string hashedPassword = HashPassword(nuevaPassword);
+            
             string query = @"
         UPDATE Usuarios
         SET PasswordHash = @pw
-        WHERE Email = @correo
-    ";
+        WHERE Email = @correo";
 
-            using SqlConnection con = GetConnection();
-            using SqlCommand cmd = new SqlCommand(query, con);
+            using NpgsqlConnection con = GetConnection();
+            using NpgsqlCommand cmd = new NpgsqlCommand(query, con);
 
-            cmd.Parameters.AddWithValue("@pw", nuevaPassword);
+            cmd.Parameters.AddWithValue("@pw", hashedPassword);
             cmd.Parameters.AddWithValue("@correo", correo);
 
             await con.OpenAsync();
@@ -766,22 +761,22 @@ WHERE LOWER(LTRIM(RTRIM(Email))) = @correo";
         public async Task GuardarCodigoRecuperacionAsync(string correo, string codigo)
         {
             const string query = @"
-                INSERT INTO RecuperacionPassword (Correo, Codigo)
-                VALUES (@Correo, @Codigo)";
+                INSERT INTO RecuperacionPassword (Correo, Codigo, Fecha, Usado)
+                VALUES (@Correo, @Codigo, NOW(), false)";
 
             await ExecuteAsync(query,
-                new SqlParameter("@Correo", correo),
-                new SqlParameter("@Codigo", codigo));
+                new NpgsqlParameter("@Correo", correo),
+                new NpgsqlParameter("@Codigo", codigo));
         }
 
         public async Task<bool> ValidarCodigoAsync(string correo, string codigo)
         {
             const string query = @"
                 SELECT COUNT(*) FROM RecuperacionPassword
-                WHERE Correo = @Correo AND Codigo = @Codigo AND Usado = 0";
+                WHERE Correo = @Correo AND Codigo = @Codigo AND Usado = false";
 
             using var con = GetConnection();
-            using var cmd = new SqlCommand(query, con);
+            using var cmd = new NpgsqlCommand(query, con);
 
             cmd.Parameters.AddWithValue("@Correo", correo);
             cmd.Parameters.AddWithValue("@Codigo", codigo);
@@ -794,33 +789,35 @@ WHERE LOWER(LTRIM(RTRIM(Email))) = @correo";
         {
             const string query = @"
                 UPDATE RecuperacionPassword
-                SET Usado = 1
+                SET Usado = true
                 WHERE Correo = @Correo AND Codigo = @Codigo";
 
             await ExecuteAsync(query,
-                new SqlParameter("@Correo", correo),
-                new SqlParameter("@Codigo", codigo));
+                new NpgsqlParameter("@Correo", correo),
+                new NpgsqlParameter("@Codigo", codigo));
         }
 
         public async Task ActualizarPasswordUsuarioAsync(string correo, string nuevoPasswordHash)
         {
+            string hashedPassword = HashPassword(nuevoPasswordHash);
+            
             const string query = @"
                 UPDATE Usuarios
                 SET PasswordHash = @PasswordHash
                 WHERE Email = @Email";
 
             await ExecuteAsync(query,
-                new SqlParameter("@PasswordHash", nuevoPasswordHash),
-                new SqlParameter("@Email", correo));
+                new NpgsqlParameter("@PasswordHash", hashedPassword),
+                new NpgsqlParameter("@Email", correo));
         }
 
-        /* ===================== HELPERS ===================== */
+        // ===================== HELPERS =====================
 
         private async Task<Dictionary<string, object>?> EjecutarLoginAsync(
-            string query, params SqlParameter[] parameters)
+            string query, params NpgsqlParameter[] parameters)
         {
             using var con = GetConnection();
-            using var cmd = new SqlCommand(query, con);
+            using var cmd = new NpgsqlCommand(query, con);
             cmd.Parameters.AddRange(parameters);
 
             await con.OpenAsync();
@@ -836,30 +833,30 @@ WHERE LOWER(LTRIM(RTRIM(Email))) = @correo";
             return result;
         }
 
-        public async Task<int> ExecuteAsync(string query, params SqlParameter[] parameters)
+        public async Task<int> ExecuteAsync(string query, params NpgsqlParameter[] parameters)
         {
-            using (SqlConnection con = GetConnection())
-            using (SqlCommand cmd = new SqlCommand(query, con))
+            using (NpgsqlConnection con = GetConnection())
+            using (NpgsqlCommand cmd = new NpgsqlCommand(query, con))
             {
                 cmd.Parameters.AddRange(parameters);
                 await con.OpenAsync();
                 return await cmd.ExecuteNonQueryAsync();
             }
         }
+        
         public async Task<List<ModuloINE>> ObtenerModulosINEAsync()
         {
             string query = @"
-        SELECT IdModulo, Nombre, Direccion, Latitud, Longitud
-        FROM ModulosAtencion
-        WHERE TipoModulo = 'INE'";
+        SELECT ID_Modulo, Nombre, Direccion, Latitud, Longitud
+        FROM ModulosINE";
 
             var lista = new List<ModuloINE>();
 
-            using SqlConnection con = GetConnection();
-            using SqlCommand cmd = new SqlCommand(query, con);
+            using NpgsqlConnection con = GetConnection();
+            using NpgsqlCommand cmd = new NpgsqlCommand(query, con);
 
             await con.OpenAsync();
-            using SqlDataReader reader = await cmd.ExecuteReaderAsync();
+            using NpgsqlDataReader reader = await cmd.ExecuteReaderAsync();
 
             while (await reader.ReadAsync())
             {
@@ -877,7 +874,7 @@ WHERE LOWER(LTRIM(RTRIM(Email))) = @correo";
             return lista;
         }
 
-        // ===================== Tramites =====================
+        // ===================== TRÁMITES INE =====================
 
         public async Task<INECompleto?> ObtenerINECompleto(int idTramite)
         {
@@ -900,7 +897,7 @@ INNER JOIN TramiteINE i ON i.ID_Tramite = t.ID_Tramite
 INNER JOIN Usuarios u ON u.ID_Usuario = t.ID_Usuario
 WHERE t.ID_Tramite = @id";
 
-            using var cmd = new SqlCommand(sql, conn);
+            using var cmd = new NpgsqlCommand(sql, conn);
             cmd.Parameters.AddWithValue("@id", idTramite);
 
             using var rd = await cmd.ExecuteReaderAsync();
@@ -914,28 +911,13 @@ WHERE t.ID_Tramite = @id";
                 CURP = rd.IsDBNull(1) ? "" : rd.GetString(1),
                 Estado = rd.IsDBNull(2) ? "" : rd.GetString(2),
                 Fecha = rd.GetDateTime(3),
-
-                ActaNacimiento = rd.IsDBNull(4)
-    ? null
-    : await rd.GetFieldValueAsync<byte[]>(4),
-
-                ComprobanteDomicilio = rd.IsDBNull(5)
-    ? null
-    : await rd.GetFieldValueAsync<byte[]>(5),
-
-                Identificacion = rd.IsDBNull(6)
-    ? null
-    : await rd.GetFieldValueAsync<byte[]>(6),
-
+                ActaNacimiento = rd.IsDBNull(4) ? null : await rd.GetFieldValueAsync<byte[]>(4),
+                ComprobanteDomicilio = rd.IsDBNull(5) ? null : await rd.GetFieldValueAsync<byte[]>(5),
+                Identificacion = rd.IsDBNull(6) ? null : await rd.GetFieldValueAsync<byte[]>(6),
                 CorreoUsuario = rd.IsDBNull(7) ? "" : rd.GetString(7),
                 DireccionUsuario = rd.IsDBNull(8) ? "" : rd.GetString(8)
             };
         }
-
-
-
-
-
 
         public async Task<List<TramiteINEItem>> ObtenerMisTramitesINEAsync(int IdUsuario)
         {
@@ -944,7 +926,7 @@ WHERE t.ID_Tramite = @id";
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            var cmd = new NpgsqlCommand(@"
         SELECT 
             t.ID_Tramite,
             i.CURP,
@@ -971,26 +953,25 @@ WHERE t.ID_Tramite = @id";
             return lista;
         }
 
-
         public async Task CrearTramiteINEAsync(CrearTramiteINEDto dto)
         {
-            using SqlConnection conn = GetConnection();
+            using NpgsqlConnection conn = GetConnection();
             await conn.OpenAsync();
 
-            using SqlTransaction transaction = conn.BeginTransaction();
+            using NpgsqlTransaction transaction = await conn.BeginTransactionAsync();
 
             try
             {
                 string insertTramite = @"
-INSERT INTO Tramites (ID_Usuario, TipoTramite)
-OUTPUT INSERTED.ID_Tramite
-VALUES (@ID_Usuario, 'INE')";
+INSERT INTO Tramites (ID_Usuario, TipoTramite, Estado, FechaCreacion)
+VALUES (@ID_Usuario, 'INE', 'Registrado', NOW())
+RETURNING ID_Tramite";
 
                 int idTramite;
 
-                using (SqlCommand cmd = new SqlCommand(insertTramite, conn, transaction))
+                using (NpgsqlCommand cmd = new NpgsqlCommand(insertTramite, conn, transaction))
                 {
-                    cmd.Parameters.Add("@ID_Usuario", SqlDbType.Int).Value = dto.IdUsuario;
+                    cmd.Parameters.Add("@ID_Usuario", NpgsqlDbType.Integer).Value = dto.IdUsuario;
                     idTramite = (int)await cmd.ExecuteScalarAsync();
                 }
 
@@ -1000,28 +981,25 @@ INSERT INTO TramiteINE
 VALUES
 (@ID_Tramite, @CURP, @Acta, @Comprobante, @Identificacion)";
 
-                using (SqlCommand cmd = new SqlCommand(insertINE, conn, transaction))
+                using (NpgsqlCommand cmd = new NpgsqlCommand(insertINE, conn, transaction))
                 {
-                    cmd.Parameters.Add("@ID_Tramite", SqlDbType.Int).Value = idTramite;
-                    cmd.Parameters.Add("@CURP", SqlDbType.VarChar, 18).Value = dto.CURP;
-
-                    cmd.Parameters.Add("@Acta", SqlDbType.VarBinary).Value = dto.ActaNacimiento;
-                    cmd.Parameters.Add("@Comprobante", SqlDbType.VarBinary).Value = dto.ComprobanteDomicilio;
-                    cmd.Parameters.Add("@Identificacion", SqlDbType.VarBinary).Value = dto.Identificacion;
+                    cmd.Parameters.Add("@ID_Tramite", NpgsqlDbType.Integer).Value = idTramite;
+                    cmd.Parameters.Add("@CURP", NpgsqlDbType.Varchar, 18).Value = dto.CURP;
+                    cmd.Parameters.Add("@Acta", NpgsqlDbType.Bytea).Value = dto.ActaNacimiento;
+                    cmd.Parameters.Add("@Comprobante", NpgsqlDbType.Bytea).Value = dto.ComprobanteDomicilio;
+                    cmd.Parameters.Add("@Identificacion", NpgsqlDbType.Bytea).Value = dto.Identificacion;
 
                     await cmd.ExecuteNonQueryAsync();
                 }
 
-                transaction.Commit();
+                await transaction.CommitAsync();
             }
             catch
             {
-                transaction.Rollback();
+                await transaction.RollbackAsync();
                 throw;
             }
         }
-
-
 
         public async Task<List<TramiteModel>> GetTramitesUsuarioAsync(int idUsuario)
         {
@@ -1040,7 +1018,7 @@ FROM Tramites
 WHERE ID_Usuario = @id
 ORDER BY FechaCreacion DESC";
 
-            using var cmd = new SqlCommand(query, conn);
+            using var cmd = new NpgsqlCommand(query, conn);
             cmd.Parameters.AddWithValue("@id", idUsuario);
 
             using var reader = await cmd.ExecuteReaderAsync();
@@ -1058,8 +1036,6 @@ ORDER BY FechaCreacion DESC";
             return lista;
         }
 
-
-
         public async Task<List<UsuarioItem>> ObtenerUsuariosAsync()
         {
             var lista = new List<UsuarioItem>();
@@ -1069,11 +1045,11 @@ ORDER BY FechaCreacion DESC";
             string q = @"
 SELECT 
     ID_Usuario,
-    Nombre + ' ' + ApellidoPaterno AS NombreCompleto,
+    Nombre || ' ' || ApellidoPaterno AS NombreCompleto,
     Email
 FROM Usuarios";
 
-            using var cmd = new SqlCommand(q, con);
+            using var cmd = new NpgsqlCommand(q, con);
 
             await con.OpenAsync();
             using var rd = await cmd.ExecuteReaderAsync();
@@ -1091,32 +1067,32 @@ FROM Usuarios";
             return lista;
         }
 
+        // ===================== COMPRAVENTA =====================
+
         public async Task CrearTramiteCompraventaAsync(CrearTramiteCompraventaDto dto)
         {
-            using SqlConnection conn = GetConnection();
+            using NpgsqlConnection conn = GetConnection();
             await conn.OpenAsync();
 
-            using SqlTransaction tx = conn.BeginTransaction();
+            using NpgsqlTransaction tx = await conn.BeginTransactionAsync();
 
             try
             {
-                // 1️⃣ Crear registro en Tramites
                 string qTramite = @"
-INSERT INTO Tramites (ID_Usuario, TipoTramite)
-OUTPUT INSERTED.ID_Tramite
-VALUES (@ID_Usuario, 'COMPRAVENTA')";
+INSERT INTO Tramites (ID_Usuario, TipoTramite, Estado, FechaCreacion)
+VALUES (@ID_Usuario, 'COMPRAVENTA', 'Registrado', NOW())
+RETURNING ID_Tramite";
 
                 int idTramite;
 
-                using (SqlCommand cmd = new SqlCommand(qTramite, conn, tx))
+                using (NpgsqlCommand cmd = new NpgsqlCommand(qTramite, conn, tx))
                 {
-                    cmd.Parameters.Add("@ID_Usuario", SqlDbType.Int)
+                    cmd.Parameters.Add("@ID_Usuario", NpgsqlDbType.Integer)
                         .Value = dto.IdUsuario;
 
                     idTramite = (int)await cmd.ExecuteScalarAsync();
                 }
 
-                // 2️⃣ Generar PDF en backend
                 byte[] contratoGenerado = ContratoPdfGenerator.GenerarContrato(
                     dto.Vendedor,
                     dto.Comprador,
@@ -1124,7 +1100,6 @@ VALUES (@ID_Usuario, 'COMPRAVENTA')";
                     dto.Monto
                 );
 
-                // 3️⃣ Insertar en TramiteCompraventa
                 string qCompra = @"
 INSERT INTO TramiteCompraventa
 (
@@ -1149,45 +1124,44 @@ VALUES
     @IdComprador
 )";
 
-                using (SqlCommand cmd = new SqlCommand(qCompra, conn, tx))
+                using (NpgsqlCommand cmd = new NpgsqlCommand(qCompra, conn, tx))
                 {
-                    cmd.Parameters.Add("@ID_Tramite", SqlDbType.Int)
+                    cmd.Parameters.Add("@ID_Tramite", NpgsqlDbType.Integer)
                         .Value = idTramite;
 
-                    cmd.Parameters.Add("@TipoBien", SqlDbType.VarChar, 30)
+                    cmd.Parameters.Add("@TipoBien", NpgsqlDbType.Varchar, 30)
                         .Value = dto.TipoBien ?? (object)DBNull.Value;
 
-                    cmd.Parameters.Add("@Vendedor", SqlDbType.NVarChar, 150)
+                    cmd.Parameters.Add("@Vendedor", NpgsqlDbType.Varchar, 150)
                         .Value = dto.Vendedor ?? (object)DBNull.Value;
 
-                    cmd.Parameters.Add("@Comprador", SqlDbType.NVarChar, 150)
+                    cmd.Parameters.Add("@Comprador", NpgsqlDbType.Varchar, 150)
                         .Value = dto.Comprador ?? (object)DBNull.Value;
 
-                    var paramMonto = cmd.Parameters.Add("@Monto", SqlDbType.Decimal);
-                    paramMonto.Precision = 18;
-                    paramMonto.Scale = 2;
-                    paramMonto.Value = dto.Monto;
+                    cmd.Parameters.Add("@Monto", NpgsqlDbType.Numeric)
+                        .Value = dto.Monto;
 
-                    cmd.Parameters.Add("@ContratoPDF", SqlDbType.VarBinary)
+                    cmd.Parameters.Add("@ContratoPDF", NpgsqlDbType.Bytea)
                         .Value = contratoGenerado ?? (object)DBNull.Value;
 
-                    cmd.Parameters.Add("@IdVendedor", SqlDbType.VarBinary)
+                    cmd.Parameters.Add("@IdVendedor", NpgsqlDbType.Bytea)
                         .Value = dto.IdentificacionVendedor ?? (object)DBNull.Value;
 
-                    cmd.Parameters.Add("@IdComprador", SqlDbType.VarBinary)
+                    cmd.Parameters.Add("@IdComprador", NpgsqlDbType.Bytea)
                         .Value = dto.IdentificacionComprador ?? (object)DBNull.Value;
 
                     await cmd.ExecuteNonQueryAsync();
                 }
 
-                tx.Commit();
+                await tx.CommitAsync();
             }
             catch
             {
-                tx.Rollback();
+                await tx.RollbackAsync();
                 throw;
             }
         }
+
         public async Task<List<ContratoItemDto>> ObtenerMisContratosCompreventaAsync(int idUsuario)
         {
             var lista = new List<ContratoItemDto>();
@@ -1195,14 +1169,14 @@ VALUES
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            var cmd = new NpgsqlCommand(@"
         SELECT ID_Tramite, TipoTramite, Estado, FechaCreacion
         FROM Tramites
         WHERE ID_Usuario = @id
         AND TipoTramite IN ('COMPRAVENTA')
         ORDER BY FechaCreacion DESC", conn);
 
-            cmd.Parameters.Add("@id", SqlDbType.Int).Value = idUsuario;
+            cmd.Parameters.Add("@id", NpgsqlDbType.Integer).Value = idUsuario;
 
             using var rd = await cmd.ExecuteReaderAsync();
 
@@ -1219,6 +1193,7 @@ VALUES
 
             return lista;
         }
+
         public async Task<List<ContratoItemDto>> ObtenerMisTestamentosAsync(int idUsuario)
         {
             var lista = new List<ContratoItemDto>();
@@ -1226,14 +1201,14 @@ VALUES
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            var cmd = new SqlCommand(@"
+            var cmd = new NpgsqlCommand(@"
         SELECT ID_Tramite, TipoTramite, Estado, FechaCreacion
         FROM Tramites
         WHERE ID_Usuario = @id
         AND TipoTramite IN ('TESTAMENTO')
         ORDER BY FechaCreacion DESC", conn);
 
-            cmd.Parameters.Add("@id", SqlDbType.Int).Value = idUsuario;
+            cmd.Parameters.Add("@id", NpgsqlDbType.Integer).Value = idUsuario;
 
             using var rd = await cmd.ExecuteReaderAsync();
 
@@ -1294,8 +1269,8 @@ LEFT JOIN TramiteTestamento te ON te.ID_Tramite = t.ID_Tramite
 LEFT JOIN TramiteSucesion s ON s.ID_Tramite = t.ID_Tramite
 WHERE t.ID_Tramite = @id";
 
-            using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.Add("@id", SqlDbType.Int).Value = idTramite;
+            using var cmd = new NpgsqlCommand(sql, conn);
+            cmd.Parameters.Add("@id", NpgsqlDbType.Integer).Value = idTramite;
 
             using var rd = await cmd.ExecuteReaderAsync();
             if (!await rd.ReadAsync()) return null;
@@ -1334,6 +1309,7 @@ WHERE t.ID_Tramite = @id";
 
             return contrato;
         }
+
         public async Task<List<CompraventaDetalleDto>> ObtenerPendientesAsync()
         {
             var lista = new List<CompraventaDetalleDto>();
@@ -1348,12 +1324,12 @@ SELECT t.ID_Tramite, c.ID_Compraventa,
        c.IdentificacionComprador,
        c.ContratoPDF,
        u.Email
-FROM dbo.Tramites t
-INNER JOIN dbo.TramiteCompraventa c ON t.ID_Tramite = c.ID_Tramite
-INNER JOIN dbo.Usuarios u ON t.ID_Usuario = u.ID_Usuario
+FROM Tramites t
+INNER JOIN TramiteCompraventa c ON t.ID_Tramite = c.ID_Tramite
+INNER JOIN Usuarios u ON t.ID_Usuario = u.ID_Usuario
 WHERE t.Estado = @estado";
 
-            using SqlCommand cmd = new SqlCommand(query, conn);
+            using NpgsqlCommand cmd = new NpgsqlCommand(query, conn);
             cmd.Parameters.AddWithValue("@estado", "Registrado");
 
             await conn.OpenAsync();
@@ -1379,9 +1355,6 @@ WHERE t.Estado = @estado";
             return lista;
         }
 
-        // ===============================
-        // 🔹 OBTENER DETALLE
-        // ===============================
         public async Task<CompraventaDetalleDto> ObtenerDetalleAsync(int idTramite)
         {
             using var conn = GetConnection();
@@ -1394,12 +1367,12 @@ SELECT t.ID_Tramite, c.ID_Compraventa,
        c.IdentificacionComprador,
        c.ContratoPDF,
        u.Email
-FROM dbo.Tramites t
-INNER JOIN dbo.TramiteCompraventa c ON t.ID_Tramite = c.ID_Tramite
-INNER JOIN dbo.Usuarios u ON t.ID_Usuario = u.ID_Usuario
+FROM Tramites t
+INNER JOIN TramiteCompraventa c ON t.ID_Tramite = c.ID_Tramite
+INNER JOIN Usuarios u ON t.ID_Usuario = u.ID_Usuario
 WHERE t.ID_Tramite = @id";
 
-            using SqlCommand cmd = new SqlCommand(query, conn);
+            using NpgsqlCommand cmd = new NpgsqlCommand(query, conn);
             cmd.Parameters.AddWithValue("@id", idTramite);
 
             await conn.OpenAsync();
@@ -1425,39 +1398,33 @@ WHERE t.ID_Tramite = @id";
             return null;
         }
 
-        // ===============================
-        // 🔹 ACEPTAR / RECHAZAR
-        // ===============================
         public async Task CambiarEstadoAsync(int idTramite, string nuevoEstado)
         {
             using var conn = GetConnection();
             await conn.OpenAsync();
 
-            // 1️⃣ Actualizar estado
             string update = @"UPDATE Tramites
                           SET Estado = @estado,
-                              FechaActualizacion = GETDATE()
+                              FechaActualizacion = NOW()
                           WHERE ID_Tramite = @id";
 
-            using SqlCommand cmd = new SqlCommand(update, conn);
+            using NpgsqlCommand cmd = new NpgsqlCommand(update, conn);
             cmd.Parameters.AddWithValue("@estado", nuevoEstado);
             cmd.Parameters.AddWithValue("@id", idTramite);
 
             await cmd.ExecuteNonQueryAsync();
 
-            // 2️⃣ Obtener correo
             string correoQuery = @"
             SELECT u.Email
             FROM Tramites t
             INNER JOIN Usuarios u ON t.ID_Usuario = u.ID_Usuario
             WHERE t.ID_Tramite = @id";
 
-            using SqlCommand cmdCorreo = new SqlCommand(correoQuery, conn);
+            using NpgsqlCommand cmdCorreo = new NpgsqlCommand(correoQuery, conn);
             cmdCorreo.Parameters.AddWithValue("@id", idTramite);
 
             string correo = (string)await cmdCorreo.ExecuteScalarAsync();
 
-            // 3️⃣ Enviar correo usando TU EmailService
             string asunto = "Resultado de tu contrato de compraventa";
             string mensaje = $"Tu contrato fue {nuevoEstado} correctamente.";
             var emailService = new EmailService();
@@ -1465,7 +1432,7 @@ WHERE t.ID_Tramite = @id";
             await emailService.EnviarCorreoAsync(correo, asunto, mensaje);
         }
 
-        // ===================== Funciones Admin =====================
+        // ===================== FUNCIONES ADMIN =====================
 
         public async Task<List<TrabajadorItemDto>> ObtenerTrabajadoresAsync()
         {
@@ -1476,12 +1443,12 @@ WHERE t.ID_Tramite = @id";
             string q = @"
         SELECT 
             ID_Trabajador,
-            CONCAT(Nombre,' ',ApellidoPaterno) AS NombreCompleto,
+            Nombre || ' ' || ApellidoPaterno AS NombreCompleto,
             Email
         FROM Trabajadores
         ORDER BY Nombre";
 
-            using var cmd = new SqlCommand(q, con);
+            using var cmd = new NpgsqlCommand(q, con);
 
             await con.OpenAsync();
 
@@ -1500,38 +1467,34 @@ WHERE t.ID_Tramite = @id";
             return lista;
         }
 
-        //eliminar usuarios
         public async Task<bool> EliminarUsuarioAsync(int id)
         {
             using var con = GetConnection();
             await con.OpenAsync();
 
-            // 1️⃣ Eliminar TramiteINE (hijos de Tramites)
             string q1 = @"
         DELETE FROM TramiteINE
         WHERE ID_Tramite IN (
             SELECT ID_Tramite FROM Tramites WHERE ID_Usuario = @id
         )";
 
-            using (var cmd1 = new SqlCommand(q1, con))
+            using (var cmd1 = new NpgsqlCommand(q1, con))
             {
                 cmd1.Parameters.AddWithValue("@id", id);
                 await cmd1.ExecuteNonQueryAsync();
             }
 
-            // 2️⃣ Eliminar Tramites
             string q2 = "DELETE FROM Tramites WHERE ID_Usuario = @id";
 
-            using (var cmd2 = new SqlCommand(q2, con))
+            using (var cmd2 = new NpgsqlCommand(q2, con))
             {
                 cmd2.Parameters.AddWithValue("@id", id);
                 await cmd2.ExecuteNonQueryAsync();
             }
 
-            // 3️⃣ Eliminar Usuario
             string q3 = "DELETE FROM Usuarios WHERE ID_Usuario = @id";
 
-            using (var cmd3 = new SqlCommand(q3, con))
+            using (var cmd3 = new NpgsqlCommand(q3, con))
             {
                 cmd3.Parameters.AddWithValue("@id", id);
                 int filas = await cmd3.ExecuteNonQueryAsync();
@@ -1545,9 +1508,9 @@ WHERE t.ID_Tramite = @id";
 
             string q = "DELETE FROM Trabajadores WHERE ID_Trabajador = @id";
 
-            using var cmd = new SqlCommand(q, con);
+            using var cmd = new NpgsqlCommand(q, con);
 
-            cmd.Parameters.Add("@id", SqlDbType.Int).Value = id;
+            cmd.Parameters.Add("@id", NpgsqlDbType.Integer).Value = id;
 
             await con.OpenAsync();
 
@@ -1556,47 +1519,44 @@ WHERE t.ID_Tramite = @id";
             return filasAfectadas > 0;
         }
 
-        //agregar trabajador
         public async Task<bool> TrabajadorExisteAsync(string email)
         {
             string query = @"
-        IF EXISTS (SELECT 1 FROM Trabajadores WHERE Email = @e)
-            SELECT 1
-        ELSE
-            SELECT 0";
+        SELECT COUNT(*) FROM Trabajadores WHERE Email = @e";
 
             using var con = GetConnection();
-            using var cmd = new SqlCommand(query, con);
+            using var cmd = new NpgsqlCommand(query, con);
 
-            cmd.Parameters.Add("@e", SqlDbType.VarChar, 150).Value = email;
+            cmd.Parameters.Add("@e", NpgsqlDbType.Varchar, 150).Value = email;
 
             await con.OpenAsync();
 
-            int result = (int)await cmd.ExecuteScalarAsync();
+            int result = Convert.ToInt32(await cmd.ExecuteScalarAsync());
 
-            return result == 1;
+            return result > 0;
         }
+
         public async Task<int> InsertarTrabajadorAsync(CrearTrabajadorDto dto)
         {
             string query = @"
         INSERT INTO Trabajadores
         (Nombre, ApellidoPaterno, ApellidoMaterno, Email, Cargo, Departamento, PasswordHash)
-        OUTPUT INSERTED.ID_Trabajador
         VALUES
-        (@n, @ap, @am, @e, @c, @d, @p)";
+        (@n, @ap, @am, @e, @c, @d, @p)
+        RETURNING ID_Trabajador";
 
             using var con = GetConnection();
-            using var cmd = new SqlCommand(query, con);
+            using var cmd = new NpgsqlCommand(query, con);
 
-            cmd.Parameters.Add("@n", SqlDbType.VarChar, 100).Value = dto.Nombre;
-            cmd.Parameters.Add("@ap", SqlDbType.VarChar, 100).Value = dto.ApellidoPaterno;
-            cmd.Parameters.Add("@am", SqlDbType.VarChar, 100).Value = dto.ApellidoMaterno;
-            cmd.Parameters.Add("@e", SqlDbType.VarChar, 150).Value = dto.Email;
-            cmd.Parameters.Add("@c", SqlDbType.VarChar, 100).Value = dto.Cargo;
-            cmd.Parameters.Add("@d", SqlDbType.VarChar, 100).Value = dto.Departamento;
+            cmd.Parameters.Add("@n", NpgsqlDbType.Varchar, 100).Value = dto.Nombre;
+            cmd.Parameters.Add("@ap", NpgsqlDbType.Varchar, 100).Value = dto.ApellidoPaterno;
+            cmd.Parameters.Add("@am", NpgsqlDbType.Varchar, 100).Value = dto.ApellidoMaterno;
+            cmd.Parameters.Add("@e", NpgsqlDbType.Varchar, 150).Value = dto.Email;
+            cmd.Parameters.Add("@c", NpgsqlDbType.Varchar, 100).Value = dto.Cargo;
+            cmd.Parameters.Add("@d", NpgsqlDbType.Varchar, 100).Value = dto.Departamento;
 
-            // 🔥 Guardar contraseña directa (SIN HASH)
-            cmd.Parameters.Add("@p", SqlDbType.VarChar, 500).Value = dto.Password;
+            string hashedPassword = HashPassword(dto.Password);
+            cmd.Parameters.Add("@p", NpgsqlDbType.Varchar, 500).Value = hashedPassword;
 
             await con.OpenAsync();
 
@@ -1605,6 +1565,4 @@ WHERE t.ID_Tramite = @id";
             return idGenerado;
         }
     }
-
 }
-
