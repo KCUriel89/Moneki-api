@@ -18,11 +18,11 @@ namespace Moneki_api.Services
     {
         private readonly string _connectionString;
 
-        protected ConnectionToSQL()
-        {
-            // 🔥 Usar la cadena que funcionó en tu prueba
-            _connectionString = "Host=aws-1-us-east-2.pooler.supabase.com;Port=5432;Database=postgres;Username=postgres.wrcrgyboaketmoppnjzh;Password=miNuevaContraseña123;SSL Mode=Require;Trust Server Certificate=true;";
-        }
+       protected ConnectionToSQL()
+{
+    _connectionString = Environment.GetEnvironmentVariable("SUPABASE_CONNECTION_STRING")
+        ?? throw new Exception("SUPABASE_CONNECTION_STRING no configurada");
+}
 
         protected NpgsqlConnection GetConnection()
         {
