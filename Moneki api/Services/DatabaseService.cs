@@ -16,13 +16,17 @@ namespace Moneki_api.Services
 {
    public abstract class ConnectionToSQL
     {
-        // 🔥 Convertido de: postgresql://postgres:MiClave123@db.wrcrgyboaketmoppnjzh.supabase.co:5432/postgres
-        private readonly string connectionString = 
-            "Host=db.wrcrgyboaketmoppnjzh.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=u-X2MTX/B+YF9fx;SSL Mode=Require;Trust Server Certificate=true;";
+        private readonly string _connectionString;
+
+        protected ConnectionToSQL()
+        {
+            // 🔥 Usar la cadena que funcionó en tu prueba
+            _connectionString = "Host=aws-1-us-east-2.pooler.supabase.com;Port=5432;Database=postgres;Username=postgres.wrcrgyboaketmoppnjzh;Password=miNuevaContraseña123;SSL Mode=Require;Trust Server Certificate=true;";
+        }
 
         protected NpgsqlConnection GetConnection()
         {
-            return new NpgsqlConnection(connectionString);
+            return new NpgsqlConnection(_connectionString);
         }
     }
     
