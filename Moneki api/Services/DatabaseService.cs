@@ -18,9 +18,9 @@ namespace Moneki_api.Services
     {
         private readonly string _connectionString;
 
-       protected ConnectionToSQL()
+    protected ConnectionToSQL()
 {
-    _connectionString = Environment.GetEnvironmentVariable("postgresql://postgres:[4Rd5hZf46%wm-nA]@db.wrcrgyboaketmoppnjzh.supabase.co:5432/postgres")
+    _connectionString = Environment.GetEnvironmentVariable("SUPABASE_CONNECTION_STRING")
         ?? throw new Exception("SUPABASE_CONNECTION_STRING no configurada");
 }
 
