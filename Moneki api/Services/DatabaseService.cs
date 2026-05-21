@@ -18,17 +18,24 @@ namespace Moneki_api.Services
     {
         private readonly string _connectionString;
 
- protected ConnectionToSQL()
+protected ConnectionToSQL()
 {
     var connectionString = Environment.GetEnvironmentVariable("SUPABASE_CONNECTION_STRING");
     
-    if (string.IsNullOrEmpty(connectionString))
-        throw new Exception("SUPABASE_CONNECTION_STRING no configurada");
+    // 🔴 LOG PARA VER EL PROBLEMA
+    Console.WriteLine("=== DEBUG CONNECTION STRING ===");
+    Console.WriteLine($"Longitud: {connectionString?.Length ?? 0}");
+    Console.WriteLine($"Contenido completo: '{connectionString}'");
     
-    // Forzar IPv4 si no está ya configurado
-    if (!connectionString.Contains("Host Resolver"))
+    if (connectionString != null && connectionString.Length > 149)
     {
-        connectionString += ";Host Resolver=PreferIPv4";
+        Console.WriteLine($"Caracter en índice 149: '{connectionString[149]}' (ASCII: {(int)connectionString[149]})");
+        Console.WriteLine($"Substring alrededor: '{connectionString.Substring(140, 20)}'");
+    }
+    
+    if (string.IsNullOrEmpty(connectionString))
+    {
+        throw new Exception("SUPABASE_CONNECTION_STRING no configurada");
     }
     
     _connectionString = connectionString;
