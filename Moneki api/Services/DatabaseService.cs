@@ -18,10 +18,20 @@ namespace Moneki_api.Services
     {
         private readonly string _connectionString;
 
-    protected ConnectionToSQL()
+ protected ConnectionToSQL()
 {
-    _connectionString = Environment.GetEnvironmentVariable("SUPABASE_CONNECTION_STRING")
-        ?? throw new Exception("SUPABASE_CONNECTION_STRING no configurada");
+    var connectionString = Environment.GetEnvironmentVariable("SUPABASE_CONNECTION_STRING");
+    
+    if (string.IsNullOrEmpty(connectionString))
+        throw new Exception("SUPABASE_CONNECTION_STRING no configurada");
+    
+    // Forzar IPv4 si no está ya configurado
+    if (!connectionString.Contains("Host Resolver"))
+    {
+        connectionString += ";Host Resolver=PreferIPv4";
+    }
+    
+    _connectionString = connectionString;
 }
 
         protected NpgsqlConnection GetConnection()
