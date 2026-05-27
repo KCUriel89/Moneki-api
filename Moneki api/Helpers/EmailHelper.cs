@@ -1,5 +1,4 @@
 using Resend;
-using Microsoft.Extensions.Options;
 
 namespace Proyecto_servicio.Helpers
 {
@@ -10,9 +9,8 @@ namespace Proyecto_servicio.Helpers
 
         public EmailService()
         {
-            var apiKey = Environment.GetEnvironmentVariable("RESEND_API_KEY") 
-                         ?? "re_tu_api_key_aqui";
-            _resend = ResendClient.Create(apiKey);
+            var apiKey = Environment.GetEnvironmentVariable("RESEND_API_KEY");
+            _resend = new ResendClient(apiKey);
         }
 
         public async Task EnviarCorreoAsync(string correoDestino, string asunto, string mensaje)
@@ -24,40 +22,26 @@ namespace Proyecto_servicio.Helpers
                     From = _fromEmail,
                     To = { correoDestino },
                     Subject = asunto,
-                    HtmlBody = $@"
-                        <html>
-                            <body style='font-family: Arial, sans-serif;'>
-                                <h2>Moneki</h2>
-                                <p>{mensaje.Replace("\n", "<br/>")}</p>
-                                <hr/>
-                                <small>Mensaje automático, no responder.</small>
-                            </body>
-                        </html>",
+                    HtmlBody = $"<p>{mensaje}</p>",
                     TextBody = mensaje
                 };
 
-                var result = await _resend.EmailSendAsync(email);
+                var result = await _resend.Email.SendAsync(email);
                 
-                if (!result.IsSuccessful())
-                {
-                    Console.WriteLine($"❌ Error Resend: {result.Error?.Message}");
-                }
-                else
-                {
-                    Console.WriteLine($"✅ Email enviado a {correoDestino}");
-                }
+                // Para Resend 0.5.1, la respuesta no tiene IsSuccessful
+                // Simplemente verificamos si hay excepción
+                Console.WriteLine($"✅ Email enviado a {correoDestino}, ID: {result}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error: {ex.Message}");
+                Console.WriteLine($"❌ Error Resend: {ex.Message}");
                 throw;
             }
         }
 
-        // Fire and forget - no bloquea la respuesta
         public void EnviarCorreoEnBackground(string correoDestino, string asunto, string mensaje)
         {
-            _ = Task.Run(async () => 
+            _ = Task.Run(async () =>
             {
                 try
                 {
