@@ -11,48 +11,60 @@ using System.Threading.Tasks;
 
 namespace Proyecto_servicio.Helpers
 {
-    public class EmailService
+   public class EmailService
+{
+    private readonly string correoOrigen = "ipncecyt13informatica.pa@gmail.com";
+    private readonly string contraseñaApp = "frut jfbb nuys lcci";
+    private readonly string servidor = "smtp.gmail.com";
+    private readonly int puerto = 587;
+
+    public EmailService()
     {
-        private readonly DatabaseService _db;
+    }
 
-        private readonly string correoOrigen = "ipncecyt13informatica.pa@gmail.com";
-        private readonly string contraseñaApp = "frut jfbb nuys lcci";
-        private readonly string servidor = "smtp.gmail.com";
-        private readonly int puerto = 587;
-
-        public EmailService()
+    // Método que no espera a que termine (fire and forget)
+    public void EnviarCorreoEnBackground(string correoDestino, string asunto, string mensaje)
+    {
+        Task.Run(async () => 
         {
-            _db = new DatabaseService();
-        }
+            try
+            {
+                await EnviarCorreoAsync(correoDestino, asunto, mensaje);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error enviando email a {correoDestino}: {ex.Message}");
+            }
+        });
+    }
 
-        public async Task EnviarCorreoAsync(string correoDestino, string asunto, string mensaje)
+    public async Task EnviarCorreoAsync(string correoDestino, string asunto, string mensaje)
+    {
+        try
         {
-            // ✅ 1. Crear correo
             var email = new MimeMessage();
             email.From.Add(MailboxAddress.Parse(correoOrigen));
             email.To.Add(MailboxAddress.Parse(correoDestino));
             email.Subject = asunto;
+            email.Body = new TextPart("plain") { Text = mensaje };
 
-            email.Body = new TextPart("plain")
-            {
-                Text = mensaje
-            };
-
-            // ✅ 2. Enviar por SMTP
             using var smtp = new SmtpClient();
+            
+            // Configurar timeouts más largos para Render
+            smtp.Timeout = 30000; // 30 segundos
+            
             await smtp.ConnectAsync(servidor, puerto, SecureSocketOptions.StartTls);
             await smtp.AuthenticateAsync(correoOrigen, contraseñaApp);
             await smtp.SendAsync(email);
             await smtp.DisconnectAsync(true);
-
-            // ✅ 3. Guardar registro en PostgreSQL
-            string query = @"INSERT INTO CorreosEnviados (Destino, Asunto, Fecha)
-                             VALUES (@d, @a, NOW())";
-
-            await _db.ExecuteAsync(query,
-                new NpgsqlParameter("@d", correoDestino),
-                new NpgsqlParameter("@a", asunto)
-            );
+            
+            Console.WriteLine($"✅ Email enviado a {correoDestino}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error SMTP: {ex.Message}");
+            throw;
         }
     }
+}
 }
