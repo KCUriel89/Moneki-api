@@ -1,55 +1,72 @@
-using Resend;
-using Microsoft.Extensions.Options;
+using sib_api_v3_sdk.Api;
+using sib_api_v3_sdk.Client;
+using sib_api_v3_sdk.Model;
 
 namespace Proyecto_servicio.Helpers
 {
     public class EmailService
     {
-        private readonly IResend _resend;
-        private readonly string _fromEmail = "ipncecyt13informatica.pa@gmail.com";
+        private readonly TransactionalEmailsApi _api;
+        private readonly string _senderEmail = "ipncecyt13informatica.pa@gmail.com";
+        private readonly string _senderName = "Moneki";
 
         public EmailService()
         {
-            // Configurar Resend manualmente (sin DI)
-            var apiKey = Environment.GetEnvironmentVariable("RESEND_API_KEY") ?? "tu_api_key_aqui";
-            _resend = ResendClient.Create(apiKey);
+            var apiKey = Environment.GetEnvironmentVariable("BREVO_API_KEY");
+            
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                throw new Exception("BREVO_API_KEY no configurada en variables de entorno");
+            }
+            
+            // Configurar cliente de Brevo
+            Configuration.Default.ApiKey.Add("api-key", apiKey);
+            _api = new TransactionalEmailsApi();
         }
 
-        public async Task EnviarCorreoAsync(string correoDestino, string asunto, string mensaje)
+        public async Task<bool> EnviarCorreoAsync(string correoDestino, string asunto, string mensaje)
         {
             try
             {
-                var message = new EmailMessage();
-                message.From = _fromEmail;
-                message.To.Add(correoDestino);
-                message.Subject = asunto;
-                message.HtmlBody = $"<p>{mensaje.Replace("\n", "<br/>")}</p>";
-                message.TextBody = mensaje;
-
-                var response = await _resend.EmailSendAsync(message);
+                // Crear el mensaje
+                var sendSmtpEmail = new SendSmtpEmail();
+                sendSmtpEmail.Subject = asunto;
+                sendSmtpEmail.HtmlContent = $@"
+                    <!DOCTYPE html>
+                    <html>
+                    <body style='font-family: Arial, sans-serif;'>
+                        <h2 style='color: #2563eb;'>Moneki</h2>
+                        <p>{mensaje.Replace("\n", "<br/>")}</p>
+                        <hr/>
+                        <small style='color: #666;'>Este es un mensaje automático, por favor no responder.</small>
+                    </body>
+                    </html>";
                 
-                Console.WriteLine($"✅ Email enviado a {correoDestino}, ID: {response.Content}");
+                sendSmtpEmail.Sender = new SendSmtpEmailSender(_senderName, _senderEmail);
+                sendSmtpEmail.To = new List<SendSmtpEmailTo>
+                {
+                    new SendSmtpEmailTo(correoDestino)
+                };
+
+                // Enviar mediante API de Brevo (Puerto 443 - No bloqueado por Render)
+                var result = await _api.SendTransacEmailAsync(sendSmtpEmail);
+                
+                Console.WriteLine($"✅ Email enviado a {correoDestino}, Mensaje ID: {result.MessageId}");
+                return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error Resend: {ex.Message}");
-                // No lanzar excepción para no romper la API
+                Console.WriteLine($"❌ Error Brevo: {ex.Message}");
+                return false;
             }
         }
 
-        // Método fire-and-forget (no bloquea la respuesta)
+        // Método fire-and-forget (no bloquea la respuesta de tu API)
         public void EnviarCorreoEnBackground(string correoDestino, string asunto, string mensaje)
         {
             _ = Task.Run(async () =>
             {
-                try
-                {
-                    await EnviarCorreoAsync(correoDestino, asunto, mensaje);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Background email error: {ex.Message}");
-                }
+                await EnviarCorreoAsync(correoDestino, asunto, mensaje);
             });
         }
     }
