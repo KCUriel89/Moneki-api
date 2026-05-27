@@ -368,26 +368,39 @@ namespace Moneki_api.Controllers
             return await _service.InsertarTrabajadorAsync(dto);
         }
         [HttpPost("recuperar")]
-        public async Task<IActionResult> RecuperarPassword([FromBody] RecuperacionRequest request)
+public async Task<IActionResult> RecuperarPassword([FromBody] RecuperacionRequest request)
+{
+    try
+    {
+        var existe = await _service.CorreoExisteUsuariosAsync(request.Email);
+
+        if (!existe)
+            return NotFound("Correo no registrado");
+
+        string codigo = new Random().Next(100000, 999999).ToString();
+
+        await _service.GuardarCodigoRecuperacionAsync(request.Email, codigo);
+        
+        // Enviar email en segundo plano (no espera)
+        var emailService = new EmailService();
+        _ = Task.Run(() => emailService.EnviarCorreoAsync(
+            request.Email,
+            "Recuperación de contraseña",
+            $"Tu código es: {codigo}"
+        ).ContinueWith(t => 
         {
-            var existe = await _service.CorreoExisteUsuariosAsync(request.Email);
+            if (t.IsFaulted)
+                Console.WriteLine($"Error enviando email: {t.Exception?.Message}");
+        }));
 
-            if (!existe)
-                return NotFound("Correo no registrado");
-
-            string codigo = new Random().Next(100000, 999999).ToString();
-
-            await _service.GuardarCodigoRecuperacionAsync(request.Email, codigo);
-            var emailService = new EmailService();
-
-            await emailService.EnviarCorreoAsync(
-                request.Email,
-                "Recuperación de contraseña",
-                $"Tu código es: {codigo}");
-
-
-            return Ok();
-        }
+        // Responder inmediatamente
+        return Ok(new { mensaje = "Si el correo está registrado, recibirás un código", email = request.Email });
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, $"Error: {ex.Message}");
+    }
+}
         [HttpPost("cambiar-password")]
         public async Task<IActionResult> CambiarPassword([FromBody] CambiarPasswordRequest request)
         {
