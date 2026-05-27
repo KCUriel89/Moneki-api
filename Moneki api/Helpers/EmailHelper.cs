@@ -1,6 +1,8 @@
 using sib_api_v3_sdk.Api;
 using sib_api_v3_sdk.Client;
 using sib_api_v3_sdk.Model;
+using System;
+using System.Threading.Tasks;
 
 namespace Proyecto_servicio.Helpers
 {
@@ -16,19 +18,25 @@ namespace Proyecto_servicio.Helpers
             
             if (string.IsNullOrEmpty(apiKey))
             {
-                throw new Exception("BREVO_API_KEY no configurada en variables de entorno");
+                Console.WriteLine("⚠️ BREVO_API_KEY no configurada");
+                return;
             }
             
-            // Configurar cliente de Brevo
             Configuration.Default.ApiKey.Add("api-key", apiKey);
             _api = new TransactionalEmailsApi();
         }
 
-        public async Task<bool> EnviarCorreoAsync(string correoDestino, string asunto, string mensaje)
+        // Usamos 'System.Threading.Tasks.Task' explícitamente para evitar conflicto
+        public async System.Threading.Tasks.Task<bool> EnviarCorreoAsync(string correoDestino, string asunto, string mensaje)
         {
             try
             {
-                // Crear el mensaje
+                if (_api == null)
+                {
+                    Console.WriteLine("❌ Brevo no configurado");
+                    return false;
+                }
+
                 var sendSmtpEmail = new SendSmtpEmail();
                 sendSmtpEmail.Subject = asunto;
                 sendSmtpEmail.HtmlContent = $@"
@@ -48,10 +56,9 @@ namespace Proyecto_servicio.Helpers
                     new SendSmtpEmailTo(correoDestino)
                 };
 
-                // Enviar mediante API de Brevo (Puerto 443 - No bloqueado por Render)
                 var result = await _api.SendTransacEmailAsync(sendSmtpEmail);
                 
-                Console.WriteLine($"✅ Email enviado a {correoDestino}, Mensaje ID: {result.MessageId}");
+                Console.WriteLine($"✅ Email enviado a {correoDestino}, ID: {result.MessageId}");
                 return true;
             }
             catch (Exception ex)
@@ -61,12 +68,19 @@ namespace Proyecto_servicio.Helpers
             }
         }
 
-        // Método fire-and-forget (no bloquea la respuesta de tu API)
+        // Fire-and-forget usando la sintaxis correcta
         public void EnviarCorreoEnBackground(string correoDestino, string asunto, string mensaje)
         {
             _ = Task.Run(async () =>
             {
-                await EnviarCorreoAsync(correoDestino, asunto, mensaje);
+                try
+                {
+                    await EnviarCorreoAsync(correoDestino, asunto, mensaje);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Background email error: {ex.Message}");
+                }
             });
         }
     }
