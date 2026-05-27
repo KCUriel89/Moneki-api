@@ -1,70 +1,73 @@
-using MailKit.Security;
-using Moneki_api.Services;
-using MailKit.Net.Smtp;
-using Npgsql;
-using NpgsqlTypes;
-using MimeKit;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using Resend;
+using Microsoft.Extensions.Options;
 
 namespace Proyecto_servicio.Helpers
 {
-   public class EmailService
-{
-    private readonly string correoOrigen = "ipncecyt13informatica.pa@gmail.com";
-    private readonly string contraseñaApp = "frut jfbb nuys lcci";
-    private readonly string servidor = "smtp.gmail.com";
-    private readonly int puerto = 587;
-
-    public EmailService()
+    public class EmailService
     {
-    }
+        private readonly IResend _resend;
+        private readonly string _fromEmail = "noreply@moneki.com";
 
-    // Método que no espera a que termine (fire and forget)
-    public void EnviarCorreoEnBackground(string correoDestino, string asunto, string mensaje)
-    {
-        Task.Run(async () => 
+        public EmailService()
+        {
+            var apiKey = Environment.GetEnvironmentVariable("RESEND_API_KEY") 
+                         ?? "re_tu_api_key_aqui";
+            _resend = ResendClient.Create(apiKey);
+        }
+
+        public async Task EnviarCorreoAsync(string correoDestino, string asunto, string mensaje)
         {
             try
             {
-                await EnviarCorreoAsync(correoDestino, asunto, mensaje);
+                var email = new EmailMessage
+                {
+                    From = _fromEmail,
+                    To = { correoDestino },
+                    Subject = asunto,
+                    HtmlBody = $@"
+                        <html>
+                            <body style='font-family: Arial, sans-serif;'>
+                                <h2>Moneki</h2>
+                                <p>{mensaje.Replace("\n", "<br/>")}</p>
+                                <hr/>
+                                <small>Mensaje automático, no responder.</small>
+                            </body>
+                        </html>",
+                    TextBody = mensaje
+                };
+
+                var result = await _resend.EmailSendAsync(email);
+                
+                if (!result.IsSuccessful())
+                {
+                    Console.WriteLine($"❌ Error Resend: {result.Error?.Message}");
+                }
+                else
+                {
+                    Console.WriteLine($"✅ Email enviado a {correoDestino}");
+                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error enviando email a {correoDestino}: {ex.Message}");
+                Console.WriteLine($"❌ Error: {ex.Message}");
+                throw;
             }
-        });
-    }
-
-    public async Task EnviarCorreoAsync(string correoDestino, string asunto, string mensaje)
-    {
-        try
-        {
-            var email = new MimeMessage();
-            email.From.Add(MailboxAddress.Parse(correoOrigen));
-            email.To.Add(MailboxAddress.Parse(correoDestino));
-            email.Subject = asunto;
-            email.Body = new TextPart("plain") { Text = mensaje };
-
-            using var smtp = new SmtpClient();
-            
-            // Configurar timeouts más largos para Render
-            smtp.Timeout = 30000; // 30 segundos
-            
-            await smtp.ConnectAsync(servidor, puerto, SecureSocketOptions.StartTls);
-            await smtp.AuthenticateAsync(correoOrigen, contraseñaApp);
-            await smtp.SendAsync(email);
-            await smtp.DisconnectAsync(true);
-            
-            Console.WriteLine($"✅ Email enviado a {correoDestino}");
         }
-        catch (Exception ex)
+
+        // Fire and forget - no bloquea la respuesta
+        public void EnviarCorreoEnBackground(string correoDestino, string asunto, string mensaje)
         {
-            Console.WriteLine($"❌ Error SMTP: {ex.Message}");
-            throw;
+            _ = Task.Run(async () => 
+            {
+                try
+                {
+                    await EnviarCorreoAsync(correoDestino, asunto, mensaje);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Background email error: {ex.Message}");
+                }
+            });
         }
     }
-}
 }
