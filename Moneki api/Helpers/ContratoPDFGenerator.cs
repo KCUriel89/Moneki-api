@@ -17,13 +17,7 @@ public static class ContratoPdfGenerator
             var fontTexto = new XFont("LiberationSans", 12, XFontStyle.Regular);
             var fontNegrita = new XFont("LiberationSans", 12, XFontStyle.Bold);
             
-            // O alternativamente, usar fuentes genéricas
-            // var fontTitulo = new XFont("Arial", 18, XFontStyle.Bold);
-            
-            // Resto de tu código...
-        }
-    }
-}
+
         double y = 40;
 
         // ===== TITULO =====
