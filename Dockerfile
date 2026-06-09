@@ -1,26 +1,35 @@
+# Etapa de build
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copiar TODO el contenido (esto incluye la carpeta Moneki api)
+# Copiar todo el proyecto
 COPY . .
 
-# Cambiar al directorio correcto donde está el .csproj
-WORKDIR /src/Moneki\ api
-
 # Restaurar dependencias
+WORKDIR "/src/Moneki api"
 RUN dotnet restore "Moneki_api.csproj"
 
 # Publicar la aplicación
 RUN dotnet publish "Moneki_api.csproj" -c Release -o /app/publish
 
-# Etapa runtime
+# 🔥 ETAPA RUNTIME CON FUENTES INSTALADAS
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
+
+# 🔥 INSTALAR FUENTES NECESARIAS PARA PDFSHARPCORE
+RUN apt-get update && apt-get install -y \
+    fonts-liberation \
+    fonts-dejavu-core \
+    fonts-freefont-ttf \
+    libgdiplus \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copiar la aplicación publicada
 COPY --from=build /app/publish .
 
-EXPOSE 80
+# Exponer el puerto
+EXPOSE 8080
+ENV ASPNETCORE_URLS=http://+:8080
 
-# Comando de entrada
+# Ejecutar la aplicación
 ENTRYPOINT ["dotnet", "Moneki_api.dll"]
