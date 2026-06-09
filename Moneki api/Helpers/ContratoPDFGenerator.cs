@@ -11,10 +11,10 @@ public static class ContratoPdfGenerator
             var page = document.AddPage();
             var gfx = XGraphics.FromPdfPage(page);
             
-            // 🔥 FUENTES SEGURAS PARA LINUX
-            var tituloFont = new XFont("Arial", 18, XFontStyle.Bold);
-            var textoFont = new XFont("Arial", 12, XFontStyle.Regular);
-            var smallFont = new XFont("Arial", 10, XFontStyle.Regular);
+            // 🔥 USAR FUENTES QUE INSTALAMOS EN EL DOCKERFILE
+            var tituloFont = new XFont("Liberation Sans", 18, XFontStyle.Bold);
+            var textoFont = new XFont("Liberation Sans", 12, XFontStyle.Regular);
+            var smallFont = new XFont("Liberation Sans", 10, XFontStyle.Regular);
 
             double y = 40;
 
