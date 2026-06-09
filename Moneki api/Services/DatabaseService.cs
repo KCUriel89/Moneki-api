@@ -749,20 +749,20 @@ WHERE LOWER(Email) = @correo";
             string hashedPassword = HashPassword(dto.Password);
             
             string query = @"
-        SELECT id_administrador, email
-        FROM administradores
-        WHERE email = @email AND passwordhash = @Password";
+        SELECT ID_Administrador, Email
+        FROM Administradores
+        WHERE Email = @Email AND PasswordHash = @Password";
 
             using var cmd = new NpgsqlCommand(query, con);
-            cmd.Parameters.AddWithValue("@email", dto.Email);
+            cmd.Parameters.AddWithValue("@Email", dto.Email);
             cmd.Parameters.AddWithValue("@Password", hashedPassword);
 
             using var reader = await cmd.ExecuteReaderAsync();
 
             if (await reader.ReadAsync())
             {
-                int id = reader.GetInt32(reader.GetOrdinal("id_administrador"));
-                string email = reader.GetString(reader.GetOrdinal("email"));
+                int id = reader.GetInt32(reader.GetOrdinal("ID_Administrador"));
+                string email = reader.GetString(reader.GetOrdinal("Email"));
 
                 return (id, email);
             }
