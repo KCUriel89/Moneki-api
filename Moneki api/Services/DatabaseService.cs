@@ -741,34 +741,52 @@ WHERE LOWER(Email) = @correo";
 
         // ===================== ADMINISTRADORES =====================
 
-        public async Task<(int Id, string Email)?> LoginAdminEmailAsync(LoginDto dto)
+       public async Task<(int Id, string Email)?> LoginAdminEmailAsync(LoginDto dto)
+{
+    Console.WriteLine($"🔐 Intentando login admin: {dto.Email}");
+    
+    using var con = GetConnection();
+    await con.OpenAsync();
+
+    string hashedPassword = HashPassword(dto.Password);
+    Console.WriteLine($"Hash generado: {hashedPassword}");
+    
+    string query = @"
+        SELECT id_administrador, email, passwordhash
+        FROM administradores
+        WHERE email = @email";
+
+    using var cmd = new NpgsqlCommand(query, con);
+    cmd.Parameters.AddWithValue("@email", dto.Email);
+
+    using var reader = await cmd.ExecuteReaderAsync();
+
+    if (await reader.ReadAsync())
+    {
+        int id = reader.GetInt32(0);
+        string email = reader.GetString(1);
+        string storedHash = reader.GetString(2);
+        
+        Console.WriteLine($"Hash almacenado: {storedHash}");
+        Console.WriteLine($"¿Coinciden? {hashedPassword == storedHash}");
+        
+        if (hashedPassword == storedHash)
         {
-            using var con = GetConnection();
-            await con.OpenAsync();
-
-            string hashedPassword = HashPassword(dto.Password);
-            
-            string query = @"
-        SELECT ID_Administrador, Email
-        FROM Administradores
-        WHERE Email = @Email AND PasswordHash = @Password";
-
-            using var cmd = new NpgsqlCommand(query, con);
-            cmd.Parameters.AddWithValue("@Email", dto.Email);
-            cmd.Parameters.AddWithValue("@Password", hashedPassword);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-
-            if (await reader.ReadAsync())
-            {
-                int id = reader.GetInt32(reader.GetOrdinal("ID_Administrador"));
-                string email = reader.GetString(reader.GetOrdinal("Email"));
-
-                return (id, email);
-            }
-
-            return null;
+            Console.WriteLine($"✅ Login exitoso para {email}");
+            return (id, email);
         }
+        else
+        {
+            Console.WriteLine($"❌ Contraseña incorrecta para {email}");
+        }
+    }
+    else
+    {
+        Console.WriteLine($"❌ No se encontró admin con email: {dto.Email}");
+    }
+
+    return null;
+}
 
         // ===================== RECUPERACIÓN PASSWORD =====================
 
