@@ -1,26 +1,29 @@
 ﻿using PdfSharpCore.Drawing;
 using PdfSharpCore.Pdf;
 using System.IO;
-//app
+
 public static class ContratoPdfGenerator
 {
-    public static byte[] GenerarContrato(
-        string vendedor,
-        string comprador,
-        string tipoBien,
-        decimal monto)
+    public static byte[] GenerarContrato(string vendedor, string comprador, string tipoBien, decimal monto)
     {
-        using var document = new PdfDocument();
-
-        var page = document.AddPage();
-        page.Size = PdfSharpCore.PageSize.A4;
-
-        var gfx = XGraphics.FromPdfPage(page);
-
-        var tituloFont = new XFont("Arial", 20, XFontStyle.Bold);
-        var textoFont = new XFont("Arial", 12);
-        var smallFont = new XFont("Arial", 10, XFontStyle.Italic);
-
+        using (var document = new PdfDocument())
+        {
+            var page = document.AddPage();
+            var gfx = XGraphics.FromPdfPage(page);
+            
+            // 🔥 USAR FUENTES QUE EXISTEN EN LINUX
+            // Opciones: "LiberationSans", "DejaVuSans", "Arial", "Courier New"
+            var fontTitulo = new XFont("LiberationSans", 18, XFontStyle.Bold);
+            var fontTexto = new XFont("LiberationSans", 12, XFontStyle.Regular);
+            var fontNegrita = new XFont("LiberationSans", 12, XFontStyle.Bold);
+            
+            // O alternativamente, usar fuentes genéricas
+            // var fontTitulo = new XFont("Arial", 18, XFontStyle.Bold);
+            
+            // Resto de tu código...
+        }
+    }
+}
         double y = 40;
 
         // ===== TITULO =====
