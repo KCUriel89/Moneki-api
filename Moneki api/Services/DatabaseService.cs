@@ -802,21 +802,26 @@ WHERE LOWER(Email) = @correo";
                 new NpgsqlParameter("@Codigo", codigo));
         }
 
-        public async Task<bool> ValidarCodigoAsync(string correo, string codigo)
-        {
-            const string query = @"
-                SELECT COUNT(*) FROM RecuperacionPassword
-                WHERE Correo = @Correo AND Codigo = @Codigo AND Usado = false";
+       public async Task<bool> ValidarCodigoAsync(string correo, string codigo)
+{
+    const string query = @"
+        SELECT COUNT(*) FROM RecuperacionPassword
+        WHERE Correo = @Correo AND Codigo = @Codigo AND Usado = false";
 
-            using var con = GetConnection();
-            using var cmd = new NpgsqlCommand(query, con);
-
-            cmd.Parameters.AddWithValue("@Correo", correo);
-            cmd.Parameters.AddWithValue("@Codigo", codigo);
-
-            await con.OpenAsync();
-            return (int)await cmd.ExecuteScalarAsync() > 0;
-        }
+    using var con = GetConnection();
+    using var cmd = new NpgsqlCommand(query, con);
+    
+    cmd.Parameters.AddWithValue("@Correo", correo);
+    cmd.Parameters.AddWithValue("@Codigo", codigo);
+    
+    await con.OpenAsync();
+    
+    // 🔥 CORRECCIÓN: Convertir a long primero, luego a int
+    var result = await cmd.ExecuteScalarAsync();
+    long count = Convert.ToInt64(result);
+    
+    return count > 0;
+}
 
         public async Task MarcarCodigoUsadoAsync(string correo, string codigo)
         {
